@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm uninstall *)",
+      "Skill(schedule)",
+      "PowerShell(& \"C:\\\\ITJOBCAFEOFFICE\\\\OfficeApplications\\\\FeedServices\\\\JobScrapService\\\\.test-workday-tenants.ps1\")",
+      "PowerShell(& \"C:\\\\ITJOBCAFEOFFICE\\\\OfficeApplications\\\\FeedServices\\\\JobScrapService\\\\.discover-workday.ps1\")"
+    ]
+  }
+}

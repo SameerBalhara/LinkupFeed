@@ -14,7 +14,11 @@ namespace LinkupFeed
             "https://jobicy.com/api/v2/remote-jobs?count=50&industry={0}";
 
         // Industries: "technology", "design", "marketing", "sales", "finance"
-        private static readonly string[] Industries = { "technology", "design" };
+        // IT feed only — keep these to technology-adjacent slugs.
+        private static readonly string[] Industries =
+        {
+            "technology", "dev", "data-science", "technical-support", "saas"
+        };
 
         public async Task<List<ScrapedJob>> FetchJobsAsync()
         {

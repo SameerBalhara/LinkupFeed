@@ -1379,7 +1379,7 @@ public static class FeedInsert
             }
             catch (Exception ex)
             {
-                throw ex;
+                throw;
             }
             //finally
             //{

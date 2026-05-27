@@ -19,38 +19,57 @@ namespace LinkupFeed
         private const int SOURCE_ID = 54;
         private static readonly int[] DelayMs = { 800, 1600, 3200 };
 
+        // NOTE: Greenhouse board tokens are not always the same as the company name.
+        // Companies that left Greenhouse (now on Workday/Lever/Ashby/custom) were removed.
+        // Verified live via https://boards-api.greenhouse.io/v1/boards/{token}/jobs
         private static readonly string[] Companies = {
         // Big Tech / Cloud
         "anthropic", "stripe", "discord", "twilio",
-        "coinbase", "hubspot", "zendesk", "asana",
-        "dropbox", "box", "okta", "cloudflare",
-        "hashicorp", "datadog", "newrelic", "pagerduty",
+        "hubspot", "asana",
+        "dropbox", "boxinc", "okta", "cloudflare",
+        "datadog", "newrelic", "pagerduty",
 
         // Dev Tools / Infrastructure
-        "github", "gitlab", "circleci", "sentry",
-        "snyk", "postman", "retool", "vercel",
-        "supabase", "planetscale", "render",
+        "gitlab", "circleci",
+        "postman", "vercel",
+        "planetscale",
 
         // Fintech
-        "plaid", "brex", "carta", "rippling",
+        "brex", "carta",
         "chime", "robinhood", "affirm", "marqeta",
 
         // Data / AI
-        "scale-ai", "weights-biases", "huggingface",
-        "deepmind", "cohere", "together-ai",
+        "scaleai",
+        "deepmind", "togetherai",
 
         // Enterprise SaaS
-        "lattice", "notion", "figma", "miro",
-        "airtable", "clickup", "monday", "calendly",
-        "intercom", "drift", "segment", "mixpanel",
+        "lattice", "figma",
+        "airtable", "calendly",
+        "intercom", "mixpanel",
 
         // E-commerce / Marketplace
-        "shopify", "etsy", "instacart", "doordash",
-        "lyft", "airbnb", "expedia",
+        "instacart",
+        "lyft", "airbnb",
 
         // Healthcare / Other Tech
-        "oscar-health", "ro", "hims", "headspace",
-        "duolingo", "coursera", "udemy"
+        "oscar",
+        "duolingo", "coursera", "udemy",
+
+        // ── Added batch: more IT-heavy Greenhouse boards ──────────────────────
+        // Tokens verified live via https://boards-api.greenhouse.io/v1/boards/{token}/jobs;
+        // dead tokens 404 and are skipped, so this list is safe to grow.
+        // Data / AI / infra
+        "databricks", "mongodb", "datarobot", "elastic", "confluent",
+        "snyk", "retool", "webflow", "grammarly",
+        // Fintech
+        "coinbase", "gemini", "sofi", "wealthfront", "betterment",
+        "nerdwallet", "plaid",
+        // Marketplaces / consumer
+        "reddit", "pinterest", "doordash", "faire", "thumbtack",
+        "samsara", "roblox", "squarespace", "peloton", "wayfair",
+        "compass", "vimeo", "flexport", "gopuff", "opendoor",
+        // Enterprise SaaS / dev tools
+        "applovin", "checkr", "benchling", "pendo", "braze"
     };
 
         // ── IT title filter ──────────────────────────────────────────────────────

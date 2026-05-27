@@ -15,7 +15,7 @@ namespace LinkupFeed
         private const string URL =
             "https://www.arbeitnow.com/api/job-board-api?page=1";
 
-        public async Task<List<ScrapedJob>> FetchJobsAsync(int maxPages = 3)
+        public async Task<List<ScrapedJob>> FetchJobsAsync(int maxPages = 10)
         {
             var results = new List<ScrapedJob>();
 

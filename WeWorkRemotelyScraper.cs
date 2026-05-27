@@ -14,7 +14,11 @@ namespace LinkupFeed
         private const int SOURCE_ID = 52;
         private static readonly string[] Feeds = {
             "https://weworkremotely.com/categories/remote-programming-jobs.rss",
+            "https://weworkremotely.com/categories/remote-back-end-programming-jobs.rss",
+            "https://weworkremotely.com/categories/remote-front-end-programming-jobs.rss",
+            "https://weworkremotely.com/categories/remote-full-stack-programming-jobs.rss",
             "https://weworkremotely.com/categories/remote-devops-sysadmin-jobs.rss",
+            "https://weworkremotely.com/categories/remote-product-jobs.rss",
             "https://weworkremotely.com/remote-jobs.rss"
         };
 

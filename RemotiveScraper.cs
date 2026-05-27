@@ -9,21 +9,30 @@ namespace LinkupFeed
     internal class RemotiveScraper
     {
         private const int SOURCE_ID = 51;
-        private const string URL =
-            "https://remotive.com/api/remote-jobs?category=software-dev&limit=100";
+        private const int LimitPerCategory = 200;
+
+        // IT-relevant Remotive categories (slugs from remotive.com/api/remote-jobs).
+        private static readonly string[] Categories =
+        {
+            "software-dev", "data", "devops", "qa", "product"
+        };
 
         public async Task<List<ScrapedJob>> FetchJobsAsync()
         {
             var results = new List<ScrapedJob>();
-            try
+
+            foreach (var category in Categories)
             {
-                var json = await Http.GetStringAsync(URL);
-                var root = JsonDocument.Parse(json).RootElement;
-
-                if (!root.TryGetProperty("jobs", out var jobsEl)) return results;
-
-                foreach (var j in jobsEl.EnumerateArray())
+                try
                 {
+                    var url = $"https://remotive.com/api/remote-jobs?category={category}&limit={LimitPerCategory}";
+                    var json = await Http.GetStringAsync(url);
+                    var root = JsonDocument.Parse(json).RootElement;
+
+                    if (!root.TryGetProperty("jobs", out var jobsEl)) continue;
+
+                    foreach (var j in jobsEl.EnumerateArray())
+                    {
                     // Filter USA-relevant: job_geo contains US, Worldwide, or blank
                     var geo = j.GetStringOrNull("candidate_required_location") ?? "";
                     if (!string.IsNullOrEmpty(geo) &&
@@ -50,12 +59,16 @@ namespace LinkupFeed
                                         ? DateTime.TryParse(pd.GetString(), out var dt) ? dt : (DateTime?)null
                                         : null
                     });
+                    }
                 }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"[Remotive] {category} error: {ex.Message}");
+                }
+
+                await Task.Delay(1000); // polite delay
             }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"[Remotive] Error: {ex.Message}");
-            }
+
             return results;
         }
 
