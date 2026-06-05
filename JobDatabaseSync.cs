@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Data;
 using System.Data.SqlClient;
 using System.Linq;
 
@@ -113,24 +114,7 @@ WHERE NULLIF(LTRIM(RTRIM(job_reference)), '') IS NOT NULL
                         job.ExternalId = Guid.NewGuid().ToString();
                     }
 
-                    FeedInsert.Post_Jobs(
-                        job.Location,
-                        job.Title,
-                        LocationSplitter.CityOf(job.Location),
-                        LocationSplitter.StateOf(job.Location),
-                        "",
-                        "USA",
-                        job.JobType,
-                        job.DatePosted?.ToString("yyyy-MM-dd HH:mm:ss") ?? "",
-                        job.ExternalId,
-                        job.Company,
-                        job.IsRemote ? 1 : 0,
-                        job.Category,
-                        "",
-                        job.JobUrl,
-                        job.Description,
-                        "",
-                        conn);
+                    InsertJob(conn, job);
 
                     inserted++;
                 }
@@ -144,12 +128,109 @@ WHERE NULLIF(LTRIM(RTRIM(job_reference)), '') IS NOT NULL
             Console.WriteLine($"{logPrefix} Database insert complete. Inserted={inserted}, Failed={failed}");
         }
 
+        private static void InsertJob(SqlConnection conn, ScrapedJob job)
+        {
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = $@"
+INSERT INTO {TableName}
+(
+    job_reference,
+    Location,
+    Title,
+    city,
+    state,
+    zip,
+    country,
+    job_type,
+    posted_at,
+    company,
+    Isremote,
+    category,
+    url,
+    description,
+    cpc,
+    inserteddate
+)
+VALUES
+(
+    @job_reference,
+    @Location,
+    @Title,
+    @city,
+    @state,
+    @zip,
+    @country,
+    @job_type,
+    @posted_at,
+    @company,
+    @Isremote,
+    @category,
+    @url,
+    @description,
+    @cpc,
+    @inserteddate
+)";
+
+            AddString(cmd, "@job_reference", job.ExternalId, 200);
+            AddString(cmd, "@Location", job.Location, 500);
+            AddString(cmd, "@Title", job.Title, 500);
+            AddString(cmd, "@city", LocationSplitter.CityOf(job.Location), 200);
+            AddString(cmd, "@state", LocationSplitter.StateOf(job.Location), 50);
+            AddString(cmd, "@zip", "", 20);
+            AddString(cmd, "@country", "USA", 50);
+            AddString(cmd, "@job_type", job.JobType, 200);
+            AddDateTime(cmd, "@posted_at", job.DatePosted);
+            AddString(cmd, "@company", job.Company, 200);
+            cmd.Parameters.Add("@Isremote", SqlDbType.Int).Value = job.IsRemote ? 1 : 0;
+            AddString(cmd, "@category", job.Category, 150);
+            AddString(cmd, "@url", job.JobUrl, 800);
+            AddString(cmd, "@description", job.Description, -1);
+            var cpc = cmd.Parameters.Add("@cpc", SqlDbType.Decimal);
+            cpc.Precision = 18;
+            cpc.Scale = 2;
+            cpc.Value = 0m;
+            cmd.Parameters.Add("@inserteddate", SqlDbType.DateTime).Value = DateTime.Now;
+
+            cmd.ExecuteNonQuery();
+        }
+
+        private static void AddString(SqlCommand cmd, string name, string value, int maxLength)
+        {
+            var parameter = maxLength == -1
+                ? cmd.Parameters.Add(name, SqlDbType.VarChar, -1)
+                : cmd.Parameters.Add(name, SqlDbType.VarChar, maxLength);
+
+            parameter.Value = Clean(value, maxLength);
+        }
+
+        private static void AddDateTime(SqlCommand cmd, string name, DateTime? value)
+        {
+            cmd.Parameters.Add(name, SqlDbType.DateTime).Value =
+                value.HasValue ? value.Value : DBNull.Value;
+        }
+
         private static void AddIfNotEmpty(HashSet<string> values, string value)
         {
             if (!string.IsNullOrEmpty(value))
             {
                 values.Add(value);
             }
+        }
+
+        private static object Clean(string value, int maxLength)
+        {
+            if (string.IsNullOrWhiteSpace(value))
+            {
+                return DBNull.Value;
+            }
+
+            value = value.Trim();
+            if (maxLength > -1 && value.Length > maxLength)
+            {
+                value = value.Substring(0, maxLength);
+            }
+
+            return value;
         }
 
         private static string Fingerprint(string title, string company, string location)

@@ -18,6 +18,20 @@ namespace LinkupFeed
     {
         static async System.Threading.Tasks.Task Main(string[] args)
         {
+            try
+            {
+                await RunAsync(args);
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[Fatal] {ex.GetType().Name}: {ex.Message}");
+                Console.WriteLine(ex);
+                Environment.ExitCode = 1;
+            }
+        }
+
+        private static async System.Threading.Tasks.Task RunAsync(string[] args)
+        {
             // await RemoteJobsScraping();
 
             if (args != null && args.Length > 0 &&
@@ -44,14 +58,19 @@ namespace LinkupFeed
             if (args != null && args.Length > 0 &&
                 string.Equals(args[0], "ashby", StringComparison.OrdinalIgnoreCase))
             {
-                await RunAshbyOnlyAsync();
+                await RunAshbyOnlyAsync(
+                    HasArg(args, "--write-db") && !HasArg(args, "--dry-run") && !HasArg(args, "--no-write-db"),
+                    GetIntArg(args, "--limit") ?? GetIntArg(args, "--max-inserts"),
+                    GetStringArg(args, "--company") ?? GetStringArg(args, "--slug"));
                 return;
             }
 
             if (args == null || args.Length == 0 ||
                 string.Equals(args[0], "all", StringComparison.OrdinalIgnoreCase))
             {
-                await RunAllScrapersWithDedupeAsync(!HasArg(args, "--dry-run") && !HasArg(args, "--no-write-db"));
+                await RunAllScrapersWithDedupeAsync(
+                    !HasArg(args, "--dry-run") && !HasArg(args, "--no-write-db"),
+                    GetIntArg(args, "--limit") ?? GetIntArg(args, "--max-inserts"));
                 return;
             }
 
@@ -222,7 +241,7 @@ namespace LinkupFeed
 
         }
 
-        private static async System.Threading.Tasks.Task RunAllScrapersWithDedupeAsync(bool writeToDatabase)
+        private static async System.Threading.Tasks.Task RunAllScrapersWithDedupeAsync(bool writeToDatabase, int? insertLimit)
         {
             var connectionString = Environment.GetEnvironmentVariable(JobDatabaseSync.ConnectionStringEnvVar);
             if (string.IsNullOrWhiteSpace(connectionString))
@@ -290,8 +309,17 @@ namespace LinkupFeed
 
             if (writeToDatabase)
             {
+                var jobsToInsert = insertLimit.HasValue
+                    ? deduped.NewJobs.Take(insertLimit.Value).ToList()
+                    : deduped.NewJobs;
+
+                if (insertLimit.HasValue)
+                {
+                    Console.WriteLine($"[All] Insert limit enabled: {jobsToInsert.Count} of {deduped.NewJobs.Count} deduped jobs will be inserted.");
+                }
+
                 Console.WriteLine("[All] WRITE MODE ENABLED. Inserting deduped jobs into database...");
-                JobDatabaseSync.InsertJobs(connectionString, deduped.NewJobs, "[All]");
+                JobDatabaseSync.InsertJobs(connectionString, jobsToInsert, "[All]");
             }
             else
             {
@@ -332,6 +360,40 @@ namespace LinkupFeed
         private static bool HasArg(string[] args, string name)
         {
             return args != null && args.Any(a => string.Equals(a, name, StringComparison.OrdinalIgnoreCase));
+        }
+
+        private static int? GetIntArg(string[] args, string name)
+        {
+            if (args == null) return null;
+
+            for (int i = 0; i < args.Length; i++)
+            {
+                if (string.Equals(args[i], name, StringComparison.OrdinalIgnoreCase) &&
+                    i + 1 < args.Length &&
+                    int.TryParse(args[i + 1], out var value) &&
+                    value >= 0)
+                {
+                    return value;
+                }
+            }
+
+            return null;
+        }
+
+        private static string GetStringArg(string[] args, string name)
+        {
+            if (args == null) return null;
+
+            for (int i = 0; i < args.Length; i++)
+            {
+                if (string.Equals(args[i], name, StringComparison.OrdinalIgnoreCase) &&
+                    i + 1 < args.Length)
+                {
+                    return args[i + 1];
+                }
+            }
+
+            return null;
         }
 
         private static async System.Threading.Tasks.Task RunSuccessFactorsOnlyAsync()
@@ -412,10 +474,10 @@ namespace LinkupFeed
             Console.WriteLine($"[Lever-Only] Attempted={jobs.Count} Inserted={ok} Failed={fail}");
         }
 
-        private static async System.Threading.Tasks.Task RunAshbyOnlyAsync()
+        private static async System.Threading.Tasks.Task RunAshbyOnlyAsync(bool writeToDatabase, int? insertLimit, string onlyCompany)
         {
             Console.WriteLine("[Ashby-Only] Starting scraper...");
-            var jobs = await new AshbyScraper().FetchJobsAsync();
+            var jobs = await new AshbyScraper().FetchJobsAsync(onlyCompany);
             Console.WriteLine($"[Ashby-Only] Scraper returned {jobs.Count} jobs (pre-US-filter).");
 
             int before = jobs.Count;
@@ -429,21 +491,41 @@ namespace LinkupFeed
             foreach (var j in jobs.Take(10))
                 Console.WriteLine($"  - [{j.Company}] {j.Title} | {j.Location} | {j.JobUrl}");
 
-            int ok = 0, fail = 0;
-            foreach (var job in jobs)
+            if (!writeToDatabase)
             {
-                try
-                {
-                    job.ExternalId = Guid.NewGuid().ToString();
-                    ok++;
-                }
-                catch (Exception ex)
-                {
-                    fail++;
-                    Console.WriteLine($"[Insert-Ashby] FAILED ExternalId={job.ExternalId} - {ex.Message}");
-                }
+                Console.WriteLine("[Ashby-Only] Inspection mode only; add --write-db to insert deduped jobs.");
+                return;
             }
-            Console.WriteLine($"[Ashby-Only] Attempted={jobs.Count} Inserted={ok} Failed={fail}");
+
+            var connectionString = Environment.GetEnvironmentVariable(JobDatabaseSync.ConnectionStringEnvVar);
+            if (string.IsNullOrWhiteSpace(connectionString))
+            {
+                throw new InvalidOperationException(
+                    $"Set {JobDatabaseSync.ConnectionStringEnvVar} before writing Ashby jobs to the database.");
+            }
+
+            Console.WriteLine("[Ashby-Only] Loading existing database keys...");
+            var existing = JobDatabaseSync.LoadExistingKeys(connectionString);
+            Console.WriteLine(
+                $"[Ashby-Only] Existing DB urls={existing.Urls.Count}, references={existing.References.Count}, fingerprints={existing.Fingerprints.Count}");
+
+            var deduped = JobDatabaseSync.RemoveDuplicates(jobs, existing);
+
+            Console.WriteLine($"[Ashby-Only] Skipped DB duplicates: {deduped.DbDuplicates}");
+            Console.WriteLine($"[Ashby-Only] Skipped batch duplicates: {deduped.BatchDuplicates}");
+            Console.WriteLine($"[Ashby-Only] New jobs after dedupe: {deduped.NewJobs.Count}");
+
+            var jobsToInsert = insertLimit.HasValue
+                ? deduped.NewJobs.Take(insertLimit.Value).ToList()
+                : deduped.NewJobs;
+
+            if (insertLimit.HasValue)
+            {
+                Console.WriteLine($"[Ashby-Only] Insert limit enabled: {jobsToInsert.Count} of {deduped.NewJobs.Count} deduped jobs will be inserted.");
+            }
+
+            Console.WriteLine("[Ashby-Only] WRITE MODE ENABLED. Inserting deduped jobs into database...");
+            JobDatabaseSync.InsertJobs(connectionString, jobsToInsert, "[Ashby-Only]");
         }
 
         private static async System.Threading.Tasks.Task RunTaleoOnlyAsync()

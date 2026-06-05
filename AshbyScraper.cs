@@ -56,11 +56,19 @@ namespace LinkupFeed
         private static readonly Regex MultiSpacePattern =
             new Regex(@"\s{2,}", RegexOptions.Compiled);
 
-        public async Task<List<ScrapedJob>> FetchJobsAsync()
+        public async Task<List<ScrapedJob>> FetchJobsAsync(string onlySlug = null)
         {
             var results = new List<ScrapedJob>();
+            var companies = Companies.AsEnumerable();
 
-            foreach (var (slug, companyName) in Companies)
+            if (!string.IsNullOrWhiteSpace(onlySlug))
+            {
+                companies = companies.Where(c =>
+                    string.Equals(c.Slug, onlySlug, StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(c.Company, onlySlug, StringComparison.OrdinalIgnoreCase));
+            }
+
+            foreach (var (slug, companyName) in companies)
             {
                 try
                 {
