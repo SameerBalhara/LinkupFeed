@@ -135,10 +135,12 @@ namespace LinkupFeed
             "mechanical", "civil", "chemical", "electrical", "industrial",
             "structural", "process", "petroleum", "aerospace", "biomedical",
             "manufacturing", "environmental", "geotechnical", "materials",
-            "sales", "account", "marketing", "financial", "finance", "accounting",
-            "human resources", "recruit", "nurse", "clinical", "pharmacist",
-            "physician", "dental", "therapist", "logistics", "supply chain",
-            "warehouse", "maintenance", "facilities", "construction",
+            "sales", "account", "member services", "marketing", "financial", "finance", "accounting",
+            "human resources", "recruit", "nurse", "nursing", "clinical", "patient care",
+            "caregiver", "hospital", "health", "healthcare", "medical", "rehab", "rehabilitation",
+            "respiratory", "radiology", "pharmacy", "pharmacist", "physician", "dental",
+            "therapist", "therapy", "behavior", "behavioral", "behavioral health",
+            "logistics", "supply chain", "warehouse", "maintenance", "facilities", "construction",
             "safety", "machinist", "electrician", "store", "retail",
             "teacher", "professor", "laboratory", "legal", "attorney",
             "paralegal", "customer service"
@@ -310,3 +312,7 @@ namespace LinkupFeed
 
 
 }
+
+
+
+

@@ -37,6 +37,11 @@ namespace LinkupFeed
         [JsonPropertyName("jobDescription")] public string Description { get; set; }
     }
 
+    public class WorkdayJobDetailResponse
+    {
+        [JsonPropertyName("jobPostingInfo")] public WorkdayJobDetail JobPostingInfo { get; set; }
+    }
+
     public class WorkdayResponse
     {
         [JsonPropertyName("total")] public int Total { get; set; }
@@ -93,13 +98,28 @@ namespace LinkupFeed
             WorkdayTenant t, string externalPath)
         {
             // externalPath looks like: Software-Engineer_JR-123456
-            var url = $"{BaseUrl(t)}/wday/cxs/{t.Tenant}/{t.Site}/job/{externalPath}";
+            var path = NormalizeExternalPath(externalPath);
+            var url = $"{BaseUrl(t)}/wday/cxs/{t.Tenant}/{t.Site}/job/{path}";
 
             var response = await _client.GetAsync(url);
             response.EnsureSuccessStatusCode();
             var body = await response.Content.ReadAsStringAsync();
-            return JsonSerializer.Deserialize<WorkdayJobDetail>(body,
-                new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+            var options = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
+            var nested = JsonSerializer.Deserialize<WorkdayJobDetailResponse>(body, options);
+            return nested?.JobPostingInfo ?? JsonSerializer.Deserialize<WorkdayJobDetail>(body, options);
+        }
+
+        private static string NormalizeExternalPath(string externalPath)
+        {
+            var path = (externalPath ?? "").Trim();
+            if (Uri.TryCreate(path, UriKind.Absolute, out var uri))
+            {
+                path = uri.AbsolutePath;
+            }
+
+            path = path.TrimStart('/');
+            if (path.StartsWith("job/", StringComparison.OrdinalIgnoreCase)) path = path.Substring(4);
+            return path;
         }
 
         // ── 3. Paginate all jobs for a tenant ────────────────────────

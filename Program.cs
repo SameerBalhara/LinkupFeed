@@ -35,6 +35,17 @@ namespace LinkupFeed
             // await RemoteJobsScraping();
 
             if (args != null && args.Length > 0 &&
+                (string.Equals(args[0], "refresh-ats-urls", StringComparison.OrdinalIgnoreCase) ||
+                 string.Equals(args[0], "refreshurls", StringComparison.OrdinalIgnoreCase)))
+            {
+                await AtsUrlDiscovery.RefreshAsync(
+                    GetStringArg(args, "--input") ?? GetStringArg(args, "--job-sites"),
+                    GetStringArg(args, "--output-root") ?? "outputs",
+                    GetIntArg(args, "--limit"));
+                return;
+            }
+
+            if (args != null && args.Length > 0 &&
                 string.Equals(args[0], "taleo", StringComparison.OrdinalIgnoreCase))
             {
                 await RunTaleoOnlyAsync();
@@ -65,12 +76,68 @@ namespace LinkupFeed
                 return;
             }
 
+            if (args != null && args.Length > 0 &&
+                string.Equals(args[0], "workday", StringComparison.OrdinalIgnoreCase))
+            {
+                await RunWorkdayOnlyAsync(
+                    HasArg(args, "--write-db") && !HasArg(args, "--dry-run") && !HasArg(args, "--no-write-db"),
+                    GetIntArg(args, "--limit") ?? GetIntArg(args, "--max-inserts"),
+                    GetStringArg(args, "--url-csv"),
+                    GetIntArg(args, "--limit-sites"));
+                return;
+            }
+
+            if (args != null && args.Length > 0 &&
+                string.Equals(args[0], "icims", StringComparison.OrdinalIgnoreCase))
+            {
+                await RunIcimsOnlyAsync(
+                    HasArg(args, "--write-db") && !HasArg(args, "--dry-run") && !HasArg(args, "--no-write-db"),
+                    GetIntArg(args, "--limit") ?? GetIntArg(args, "--max-inserts"),
+                    GetStringArg(args, "--url-csv"),
+                    GetIntArg(args, "--limit-sites"));
+                return;
+            }
+
+            if (args != null && args.Length > 0 &&
+                string.Equals(args[0], "smartrecruiters", StringComparison.OrdinalIgnoreCase))
+            {
+                await RunSmartRecruitersOnlyAsync(
+                    HasArg(args, "--write-db") && !HasArg(args, "--dry-run") && !HasArg(args, "--no-write-db"),
+                    GetIntArg(args, "--limit") ?? GetIntArg(args, "--max-inserts"),
+                    GetStringArg(args, "--company") ?? GetStringArg(args, "--slug"));
+                return;
+            }
+
+            if (args != null && args.Length > 0 &&
+                string.Equals(args[0], "dayforce", StringComparison.OrdinalIgnoreCase))
+            {
+                await RunDayforceOnlyAsync(
+                    HasArg(args, "--write-db") && !HasArg(args, "--dry-run") && !HasArg(args, "--no-write-db"),
+                    GetIntArg(args, "--limit") ?? GetIntArg(args, "--max-inserts"),
+                    GetStringArg(args, "--company") ?? GetStringArg(args, "--client") ?? GetStringArg(args, "--slug"));
+                return;
+            }
+
+            if (args != null && args.Length > 0 &&
+                string.Equals(args[0], "recruitee", StringComparison.OrdinalIgnoreCase))
+            {
+                await RunRecruiteeOnlyAsync(
+                    HasArg(args, "--write-db") && !HasArg(args, "--dry-run") && !HasArg(args, "--no-write-db"),
+                    GetIntArg(args, "--limit") ?? GetIntArg(args, "--max-inserts"),
+                    GetStringArg(args, "--company") ?? GetStringArg(args, "--subdomain") ?? GetStringArg(args, "--slug"));
+                return;
+            }
+
             if (args == null || args.Length == 0 ||
                 string.Equals(args[0], "all", StringComparison.OrdinalIgnoreCase))
             {
                 await RunAllScrapersWithDedupeAsync(
                     !HasArg(args, "--dry-run") && !HasArg(args, "--no-write-db"),
-                    GetIntArg(args, "--limit") ?? GetIntArg(args, "--max-inserts"));
+                    GetIntArg(args, "--limit") ?? GetIntArg(args, "--max-inserts"),
+                    GetStringArg(args, "--only") ?? GetStringArg(args, "--source"),
+                    GetIntArg(args, "--limit-sites"),
+                    GetStringArg(args, "--workday-url-csv"),
+                    GetStringArg(args, "--icims-url-csv"));
                 return;
             }
 
@@ -241,7 +308,7 @@ namespace LinkupFeed
 
         }
 
-        private static async System.Threading.Tasks.Task RunAllScrapersWithDedupeAsync(bool writeToDatabase, int? insertLimit)
+        private static async System.Threading.Tasks.Task RunAllScrapersWithDedupeAsync(bool writeToDatabase, int? insertLimit, string onlySource, int? limitSites, string workdayUrlCsv, string icimsUrlCsv)
         {
             var connectionString = Environment.GetEnvironmentVariable(JobDatabaseSync.ConnectionStringEnvVar);
             if (string.IsNullOrWhiteSpace(connectionString))
@@ -252,47 +319,109 @@ namespace LinkupFeed
 
             var allJobs = new List<ScrapedJob>();
 
-            await AddFilteredJobsAsync(
-                allJobs,
-                "Free scrapers",
-                () => new FreeJobScraperOrchestrator().RunAllAsync(),
-                includeRemoteWithoutUsLocation: false);
+            if (!string.IsNullOrWhiteSpace(onlySource))
+            {
+                Console.WriteLine($"[All] Source filter enabled: {onlySource}");
+            }
 
-            await AddFilteredJobsAsync(
-                allJobs,
-                "Workday",
-                () => new WorkdayPreprocesser().ProcessAllTenantsAsync(),
-                includeRemoteWithoutUsLocation: false);
+            if (ShouldRunSource(onlySource, "Free scrapers", "free"))
+            {
+                await AddFilteredJobsAsync(
+                    allJobs,
+                    "Free scrapers",
+                    () => new FreeJobScraperOrchestrator().RunAllAsync(),
+                    includeRemoteWithoutUsLocation: false);
+            }
 
-            await AddFilteredJobsAsync(
-                allJobs,
-                "SuccessFactors",
-                () => new SuccessFactorsScraper().FetchJobsAsync(),
-                includeRemoteWithoutUsLocation: false);
+            if (ShouldRunSource(onlySource, "Workday"))
+            {
+                await AddFilteredJobsAsync(
+                    allJobs,
+                    "Workday",
+                    () => FetchCombinedWorkdayJobsAsync(workdayUrlCsv, limitSites),
+                    includeRemoteWithoutUsLocation: true);
+            }
 
-            await AddFilteredJobsAsync(
-                allJobs,
-                "Lever",
-                () => new LeverScraper().FetchJobsAsync(),
-                includeRemoteWithoutUsLocation: true);
+            if (ShouldRunSource(onlySource, "iCIMS", "icims"))
+            {
+                await AddFilteredJobsAsync(
+                    allJobs,
+                    "iCIMS",
+                    () => new IcimsScraper().FetchJobsAsync(icimsUrlCsv, limitSites),
+                    includeRemoteWithoutUsLocation: true);
+            }
 
-            await AddFilteredJobsAsync(
-                allJobs,
-                "Ashby",
-                () => new AshbyScraper().FetchJobsAsync(),
-                includeRemoteWithoutUsLocation: true);
+            if (ShouldRunSource(onlySource, "SuccessFactors", "success-factors"))
+            {
+                await AddFilteredJobsAsync(
+                    allJobs,
+                    "SuccessFactors",
+                    () => new SuccessFactorsScraper().FetchJobsAsync(),
+                    includeRemoteWithoutUsLocation: false);
+            }
 
-            await AddFilteredJobsAsync(
-                allJobs,
-                "Greenhouse",
-                () => new GreenhouseAtsScraper().FetchJobsAsync(),
-                includeRemoteWithoutUsLocation: true);
+            if (ShouldRunSource(onlySource, "Lever"))
+            {
+                await AddFilteredJobsAsync(
+                    allJobs,
+                    "Lever",
+                    () => new LeverScraper().FetchJobsAsync(),
+                    includeRemoteWithoutUsLocation: true);
+            }
 
-            await AddFilteredJobsAsync(
-                allJobs,
-                "Taleo",
-                () => new TaleoScraper().FetchJobsAsync(),
-                includeRemoteWithoutUsLocation: false);
+            if (ShouldRunSource(onlySource, "Ashby"))
+            {
+                await AddFilteredJobsAsync(
+                    allJobs,
+                    "Ashby",
+                    () => new AshbyScraper().FetchJobsAsync(),
+                    includeRemoteWithoutUsLocation: true);
+            }
+
+            if (ShouldRunSource(onlySource, "Greenhouse"))
+            {
+                await AddFilteredJobsAsync(
+                    allJobs,
+                    "Greenhouse",
+                    () => new GreenhouseAtsScraper().FetchJobsAsync(),
+                    includeRemoteWithoutUsLocation: true);
+            }
+
+            if (ShouldRunSource(onlySource, "SmartRecruiters", "smart-recruiters"))
+            {
+                await AddFilteredJobsAsync(
+                    allJobs,
+                    "SmartRecruiters",
+                    () => new SmartRecruitersScraper().FetchJobsAsync(),
+                    includeRemoteWithoutUsLocation: true);
+            }
+
+            if (ShouldRunSource(onlySource, "Dayforce"))
+            {
+                await AddFilteredJobsAsync(
+                    allJobs,
+                    "Dayforce",
+                    () => new DayforceScraper().FetchJobsAsync(),
+                    includeRemoteWithoutUsLocation: true);
+            }
+
+            if (ShouldRunSource(onlySource, "Recruitee"))
+            {
+                await AddFilteredJobsAsync(
+                    allJobs,
+                    "Recruitee",
+                    () => new RecruiteeScraper().FetchJobsAsync(),
+                    includeRemoteWithoutUsLocation: true);
+            }
+
+            if (ShouldRunSource(onlySource, "Taleo"))
+            {
+                await AddFilteredJobsAsync(
+                    allJobs,
+                    "Taleo",
+                    () => new TaleoScraper().FetchJobsAsync(),
+                    includeRemoteWithoutUsLocation: false);
+            }
 
             Console.WriteLine($"[All] Combined filtered jobs before dedupe: {allJobs.Count}");
 
@@ -355,6 +484,26 @@ namespace LinkupFeed
             {
                 Console.WriteLine($"[{label}] FAILED: {ex.Message}");
             }
+        }
+
+        private static bool ShouldRunSource(string onlySource, string label, params string[] aliases)
+        {
+            if (string.IsNullOrWhiteSpace(onlySource)) return true;
+
+            var wanted = NormalizeSourceName(onlySource);
+            if (wanted == NormalizeSourceName(label)) return true;
+
+            return aliases.Any(alias => wanted == NormalizeSourceName(alias));
+        }
+
+        private static string NormalizeSourceName(string value)
+        {
+            return string.IsNullOrWhiteSpace(value)
+                ? ""
+                : new string(value
+                    .Where(char.IsLetterOrDigit)
+                    .Select(char.ToLowerInvariant)
+                    .ToArray());
         }
 
         private static bool HasArg(string[] args, string name)
@@ -528,6 +677,262 @@ namespace LinkupFeed
             JobDatabaseSync.InsertJobs(connectionString, jobsToInsert, "[Ashby-Only]");
         }
 
+        private static async System.Threading.Tasks.Task<List<ScrapedJob>> FetchCombinedWorkdayJobsAsync(string inputCsv, int? limitSites)
+        {
+            var combined = new List<ScrapedJob>();
+
+            var discoveredJobs = await new WorkdayScraper().FetchJobsAsync(inputCsv, limitSites);
+            Console.WriteLine($"[Workday] CSV-discovered pipeline returned {discoveredJobs.Count} jobs.");
+            combined.AddRange(discoveredJobs);
+
+            try
+            {
+                var legacyJobs = await new WorkdayPreprocesser().ProcessAllTenantsAsync(limitSites);
+                Console.WriteLine($"[Workday] Legacy tenant pipeline returned {legacyJobs.Count} jobs.");
+                combined.AddRange(legacyJobs);
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[Workday] Legacy tenant pipeline error: {ex.Message}");
+            }
+
+            Console.WriteLine($"[Workday] Combined Workday jobs before shared filters/dedupe: {combined.Count}");
+            return combined;
+        }
+        private static async System.Threading.Tasks.Task RunWorkdayOnlyAsync(bool writeToDatabase, int? insertLimit, string inputCsv, int? limitSites)
+        {
+            await RunSingleScraperWithDedupeAsync(
+                "Workday-Only",
+                () => FetchCombinedWorkdayJobsAsync(inputCsv, limitSites),
+                writeToDatabase,
+                insertLimit,
+                includeRemoteWithoutUsLocation: true);
+        }
+
+        private static async System.Threading.Tasks.Task RunIcimsOnlyAsync(bool writeToDatabase, int? insertLimit, string inputCsv, int? limitSites)
+        {
+            await RunSingleScraperWithDedupeAsync(
+                "iCIMS-Only",
+                () => new IcimsScraper().FetchJobsAsync(inputCsv, limitSites),
+                writeToDatabase,
+                insertLimit,
+                includeRemoteWithoutUsLocation: true);
+        }
+
+        private static async System.Threading.Tasks.Task RunSingleScraperWithDedupeAsync(
+            string label,
+            Func<System.Threading.Tasks.Task<List<ScrapedJob>>> fetch,
+            bool writeToDatabase,
+            int? insertLimit,
+            bool includeRemoteWithoutUsLocation)
+        {
+            Console.WriteLine($"[{label}] Starting scraper...");
+            var jobs = await fetch();
+            Console.WriteLine($"[{label}] Scraper returned {jobs.Count} jobs (pre-filter).");
+
+            int before = jobs.Count;
+            jobs = jobs.Where(j => UsLocationFilter.IsUs(j.Location) || (includeRemoteWithoutUsLocation && j.IsRemote)).ToList();
+            Console.WriteLine($"[{label}] US/remote filter: {before} -> {jobs.Count}");
+
+            int itBefore = jobs.Count;
+            jobs = jobs.Where(j => ItJobFilter.IsIt(j.Title, j.Category)).ToList();
+            Console.WriteLine($"[{label}] IT filter: {itBefore} -> {jobs.Count}");
+
+            foreach (var j in jobs.Take(10))
+                Console.WriteLine($"  - [{j.Company}] {j.Title} | {j.Location} | {j.JobUrl}");
+
+            if (!writeToDatabase)
+            {
+                Console.WriteLine($"[{label}] Inspection mode only; add --write-db to insert deduped jobs.");
+                return;
+            }
+
+            var connectionString = Environment.GetEnvironmentVariable(JobDatabaseSync.ConnectionStringEnvVar);
+            if (string.IsNullOrWhiteSpace(connectionString))
+            {
+                throw new InvalidOperationException($"Set {JobDatabaseSync.ConnectionStringEnvVar} before writing {label} jobs to the database.");
+            }
+
+            Console.WriteLine($"[{label}] Loading existing database keys...");
+            var existing = JobDatabaseSync.LoadExistingKeys(connectionString);
+            Console.WriteLine($"[{label}] Existing DB urls={existing.Urls.Count}, references={existing.References.Count}, fingerprints={existing.Fingerprints.Count}");
+
+            var deduped = JobDatabaseSync.RemoveDuplicates(jobs, existing);
+            Console.WriteLine($"[{label}] Skipped DB duplicates: {deduped.DbDuplicates}");
+            Console.WriteLine($"[{label}] Skipped batch duplicates: {deduped.BatchDuplicates}");
+            Console.WriteLine($"[{label}] New jobs after dedupe: {deduped.NewJobs.Count}");
+
+            var jobsToInsert = insertLimit.HasValue ? deduped.NewJobs.Take(insertLimit.Value).ToList() : deduped.NewJobs;
+            if (insertLimit.HasValue)
+            {
+                Console.WriteLine($"[{label}] Insert limit enabled: {jobsToInsert.Count} of {deduped.NewJobs.Count} deduped jobs will be inserted.");
+            }
+
+            Console.WriteLine($"[{label}] WRITE MODE ENABLED. Inserting deduped jobs into database...");
+            JobDatabaseSync.InsertJobs(connectionString, jobsToInsert, $"[{label}]");
+        }
+        private static async System.Threading.Tasks.Task RunSmartRecruitersOnlyAsync(bool writeToDatabase, int? insertLimit, string onlyCompany)
+        {
+            Console.WriteLine("[SmartRecruiters-Only] Starting scraper...");
+            var jobs = await new SmartRecruitersScraper().FetchJobsAsync(onlyCompany);
+            Console.WriteLine($"[SmartRecruiters-Only] Scraper returned {jobs.Count} jobs (pre-US-filter).");
+
+            int before = jobs.Count;
+            jobs = jobs.Where(j => UsLocationFilter.IsUs(j.Location) || j.IsRemote == true).ToList();
+            Console.WriteLine($"[SmartRecruiters-Only] US filter: {before} -> {jobs.Count}");
+
+            int itBefore = jobs.Count;
+            jobs = jobs.Where(j => ItJobFilter.IsIt(j.Title, j.Category)).ToList();
+            Console.WriteLine($"[SmartRecruiters-Only] IT filter: {itBefore} -> {jobs.Count}");
+
+            foreach (var j in jobs.Take(10))
+                Console.WriteLine($"  - [{j.Company}] {j.Title} | {j.Location} | {j.JobUrl}");
+
+            if (!writeToDatabase)
+            {
+                Console.WriteLine("[SmartRecruiters-Only] Inspection mode only; add --write-db to insert deduped jobs.");
+                return;
+            }
+
+            var connectionString = Environment.GetEnvironmentVariable(JobDatabaseSync.ConnectionStringEnvVar);
+            if (string.IsNullOrWhiteSpace(connectionString))
+            {
+                throw new InvalidOperationException(
+                    $"Set {JobDatabaseSync.ConnectionStringEnvVar} before writing SmartRecruiters jobs to the database.");
+            }
+
+            Console.WriteLine("[SmartRecruiters-Only] Loading existing database keys...");
+            var existing = JobDatabaseSync.LoadExistingKeys(connectionString);
+            Console.WriteLine(
+                $"[SmartRecruiters-Only] Existing DB urls={existing.Urls.Count}, references={existing.References.Count}, fingerprints={existing.Fingerprints.Count}");
+
+            var deduped = JobDatabaseSync.RemoveDuplicates(jobs, existing);
+
+            Console.WriteLine($"[SmartRecruiters-Only] Skipped DB duplicates: {deduped.DbDuplicates}");
+            Console.WriteLine($"[SmartRecruiters-Only] Skipped batch duplicates: {deduped.BatchDuplicates}");
+            Console.WriteLine($"[SmartRecruiters-Only] New jobs after dedupe: {deduped.NewJobs.Count}");
+
+            var jobsToInsert = insertLimit.HasValue
+                ? deduped.NewJobs.Take(insertLimit.Value).ToList()
+                : deduped.NewJobs;
+
+            if (insertLimit.HasValue)
+            {
+                Console.WriteLine($"[SmartRecruiters-Only] Insert limit enabled: {jobsToInsert.Count} of {deduped.NewJobs.Count} deduped jobs will be inserted.");
+            }
+
+            Console.WriteLine("[SmartRecruiters-Only] WRITE MODE ENABLED. Inserting deduped jobs into database...");
+            JobDatabaseSync.InsertJobs(connectionString, jobsToInsert, "[SmartRecruiters-Only]");
+        }
+
+        private static async System.Threading.Tasks.Task RunDayforceOnlyAsync(bool writeToDatabase, int? insertLimit, string onlyCompany)
+        {
+            Console.WriteLine("[Dayforce-Only] Starting scraper...");
+            var jobs = await new DayforceScraper().FetchJobsAsync(onlyCompany);
+            Console.WriteLine($"[Dayforce-Only] Scraper returned {jobs.Count} jobs (pre-US-filter).");
+
+            int before = jobs.Count;
+            jobs = jobs.Where(j => UsLocationFilter.IsUs(j.Location) || j.IsRemote == true).ToList();
+            Console.WriteLine($"[Dayforce-Only] US filter: {before} -> {jobs.Count}");
+
+            int itBefore = jobs.Count;
+            jobs = jobs.Where(j => ItJobFilter.IsIt(j.Title, j.Category)).ToList();
+            Console.WriteLine($"[Dayforce-Only] IT filter: {itBefore} -> {jobs.Count}");
+
+            foreach (var j in jobs.Take(10))
+                Console.WriteLine($"  - [{j.Company}] {j.Title} | {j.Location} | {j.JobUrl}");
+
+            if (!writeToDatabase)
+            {
+                Console.WriteLine("[Dayforce-Only] Inspection mode only; add --write-db to insert deduped jobs.");
+                return;
+            }
+
+            var connectionString = Environment.GetEnvironmentVariable(JobDatabaseSync.ConnectionStringEnvVar);
+            if (string.IsNullOrWhiteSpace(connectionString))
+            {
+                throw new InvalidOperationException(
+                    $"Set {JobDatabaseSync.ConnectionStringEnvVar} before writing Dayforce jobs to the database.");
+            }
+
+            Console.WriteLine("[Dayforce-Only] Loading existing database keys...");
+            var existing = JobDatabaseSync.LoadExistingKeys(connectionString);
+            Console.WriteLine(
+                $"[Dayforce-Only] Existing DB urls={existing.Urls.Count}, references={existing.References.Count}, fingerprints={existing.Fingerprints.Count}");
+
+            var deduped = JobDatabaseSync.RemoveDuplicates(jobs, existing);
+
+            Console.WriteLine($"[Dayforce-Only] Skipped DB duplicates: {deduped.DbDuplicates}");
+            Console.WriteLine($"[Dayforce-Only] Skipped batch duplicates: {deduped.BatchDuplicates}");
+            Console.WriteLine($"[Dayforce-Only] New jobs after dedupe: {deduped.NewJobs.Count}");
+
+            var jobsToInsert = insertLimit.HasValue
+                ? deduped.NewJobs.Take(insertLimit.Value).ToList()
+                : deduped.NewJobs;
+
+            if (insertLimit.HasValue)
+            {
+                Console.WriteLine($"[Dayforce-Only] Insert limit enabled: {jobsToInsert.Count} of {deduped.NewJobs.Count} deduped jobs will be inserted.");
+            }
+
+            Console.WriteLine("[Dayforce-Only] WRITE MODE ENABLED. Inserting deduped jobs into database...");
+            JobDatabaseSync.InsertJobs(connectionString, jobsToInsert, "[Dayforce-Only]");
+        }
+
+        private static async System.Threading.Tasks.Task RunRecruiteeOnlyAsync(bool writeToDatabase, int? insertLimit, string onlyCompany)
+        {
+            Console.WriteLine("[Recruitee-Only] Starting scraper...");
+            var jobs = await new RecruiteeScraper().FetchJobsAsync(onlyCompany);
+            Console.WriteLine($"[Recruitee-Only] Scraper returned {jobs.Count} jobs (pre-US-filter).");
+
+            int before = jobs.Count;
+            jobs = jobs.Where(j => UsLocationFilter.IsUs(j.Location) || j.IsRemote == true).ToList();
+            Console.WriteLine($"[Recruitee-Only] US filter: {before} -> {jobs.Count}");
+
+            int itBefore = jobs.Count;
+            jobs = jobs.Where(j => ItJobFilter.IsIt(j.Title, j.Category)).ToList();
+            Console.WriteLine($"[Recruitee-Only] IT filter: {itBefore} -> {jobs.Count}");
+
+            foreach (var j in jobs.Take(10))
+                Console.WriteLine($"  - [{j.Company}] {j.Title} | {j.Location} | {j.JobUrl}");
+
+            if (!writeToDatabase)
+            {
+                Console.WriteLine("[Recruitee-Only] Inspection mode only; add --write-db to insert deduped jobs.");
+                return;
+            }
+
+            var connectionString = Environment.GetEnvironmentVariable(JobDatabaseSync.ConnectionStringEnvVar);
+            if (string.IsNullOrWhiteSpace(connectionString))
+            {
+                throw new InvalidOperationException(
+                    $"Set {JobDatabaseSync.ConnectionStringEnvVar} before writing Recruitee jobs to the database.");
+            }
+
+            Console.WriteLine("[Recruitee-Only] Loading existing database keys...");
+            var existing = JobDatabaseSync.LoadExistingKeys(connectionString);
+            Console.WriteLine(
+                $"[Recruitee-Only] Existing DB urls={existing.Urls.Count}, references={existing.References.Count}, fingerprints={existing.Fingerprints.Count}");
+
+            var deduped = JobDatabaseSync.RemoveDuplicates(jobs, existing);
+
+            Console.WriteLine($"[Recruitee-Only] Skipped DB duplicates: {deduped.DbDuplicates}");
+            Console.WriteLine($"[Recruitee-Only] Skipped batch duplicates: {deduped.BatchDuplicates}");
+            Console.WriteLine($"[Recruitee-Only] New jobs after dedupe: {deduped.NewJobs.Count}");
+
+            var jobsToInsert = insertLimit.HasValue
+                ? deduped.NewJobs.Take(insertLimit.Value).ToList()
+                : deduped.NewJobs;
+
+            if (insertLimit.HasValue)
+            {
+                Console.WriteLine($"[Recruitee-Only] Insert limit enabled: {jobsToInsert.Count} of {deduped.NewJobs.Count} deduped jobs will be inserted.");
+            }
+
+            Console.WriteLine("[Recruitee-Only] WRITE MODE ENABLED. Inserting deduped jobs into database...");
+            JobDatabaseSync.InsertJobs(connectionString, jobsToInsert, "[Recruitee-Only]");
+        }
+
         private static async System.Threading.Tasks.Task RunTaleoOnlyAsync()
         {
             Console.WriteLine("[Taleo-Only] Starting scraper...");
@@ -568,3 +973,9 @@ namespace LinkupFeed
         }
     }
 }
+
+
+
+
+
+
