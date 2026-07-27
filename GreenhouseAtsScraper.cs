@@ -156,6 +156,8 @@ namespace LinkupFeed
                             ? locEl.GetStringOrNull("name") ?? "" : "";
                         if (!IsUsaLocation(location)) continue;
 
+                        var description = StripHtml(j.GetStringOrNull("content"));
+
                         results.Add(new ScrapedJob
                         {
                             SourceId = SOURCE_ID,
@@ -164,12 +166,14 @@ namespace LinkupFeed
                             Title = j.GetStringOrNull("title"),
                             Company = company.ToUpperFirst(),
                             Location = location,
-                            Description = StripHtml(j.GetStringOrNull("content")),
+                            Description = description,
                             JobUrl = j.GetStringOrNull("absolute_url"),
                             IsRemote = location.Contains("Remote", StringComparison.OrdinalIgnoreCase),
                             DatePosted = j.TryGetProperty("updated_at", out var ua)
                                             ? DateTime.TryParse(ua.GetString(), out var dt) ? dt : (DateTime?)null
-                                            : null
+                                            : null,
+                            JobType = ExtractJobType(j, description),
+                            Category = ExtractCategory(j)
                         });
                     }
                 }
@@ -213,11 +217,219 @@ namespace LinkupFeed
             return UsaCityFragments.Any(city => l.Contains(city));
         }
 
-        private static string StripHtml(string? html)
+        private static string StripHtml(string html)
         {
             if (string.IsNullOrEmpty(html)) return string.Empty;
             var text = HtmlStripPattern.Replace(html, " ");
             return Regex.Replace(text, @"\s{2,}", " ").Trim();
+        }
+
+        private static string ExtractJobType(JsonElement job, string description)
+        {
+            var explicitType = FirstNonEmpty(
+                job.GetStringOrNull("employment_type"),
+                job.GetStringOrNull("employmentType"),
+                job.GetStringOrNull("job_type"),
+                job.GetStringOrNull("jobType"),
+                job.GetStringOrNull("commitment"),
+                job.GetStringOrNull("type"));
+            if (!string.IsNullOrWhiteSpace(explicitType)) return NormalizeJobType(explicitType);
+
+            var metadataType = JobTypeFromMetadata(job);
+            if (!string.IsNullOrWhiteSpace(metadataType)) return NormalizeJobType(metadataType);
+
+            return InferJobType($"{job.GetStringOrNull("title")} {description}");
+        }
+
+        private static string ExtractCategory(JsonElement job)
+        {
+            var explicitCategory = FirstNonEmpty(
+                job.GetStringOrNull("category"),
+                job.GetStringOrNull("department"),
+                job.GetStringOrNull("team"),
+                job.GetStringOrNull("function"));
+            if (!string.IsNullOrWhiteSpace(explicitCategory)) return explicitCategory;
+
+            var departments = NamesFromArrayOrObject(job, "departments");
+            if (!string.IsNullOrWhiteSpace(departments)) return departments;
+
+            var metadataCategory = CategoryFromMetadata(job);
+            if (!string.IsNullOrWhiteSpace(metadataCategory)) return metadataCategory;
+
+            return InferCategory($"{job.GetStringOrNull("title")}");
+        }
+
+        private static string NamesFromArrayOrObject(JsonElement job, string property)
+        {
+            if (!job.TryGetProperty(property, out var value)) return "";
+            var names = new List<string>();
+            if (value.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var item in value.EnumerateArray())
+                {
+                    var name = NameFromElement(item);
+                    if (!string.IsNullOrWhiteSpace(name)) names.Add(name);
+                }
+            }
+            else
+            {
+                var name = NameFromElement(value);
+                if (!string.IsNullOrWhiteSpace(name)) names.Add(name);
+            }
+
+            return string.Join(" / ", names.Distinct(StringComparer.OrdinalIgnoreCase));
+        }
+
+        private static string NameFromElement(JsonElement value)
+        {
+            if (value.ValueKind == JsonValueKind.String) return value.GetString();
+            if (value.ValueKind != JsonValueKind.Object) return "";
+            return FirstNonEmpty(
+                value.GetStringOrNull("name"),
+                value.GetStringOrNull("label"),
+                value.GetStringOrNull("value"),
+                value.GetStringOrNull("title"));
+        }
+
+        private static string CategoryFromMetadata(JsonElement job)
+        {
+            if (!job.TryGetProperty("metadata", out var metadata)) return "";
+            if (metadata.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var item in metadata.EnumerateArray())
+                {
+                    var value = CategoryFromMetadataItem(item);
+                    if (!string.IsNullOrWhiteSpace(value)) return value;
+                }
+            }
+            else if (metadata.ValueKind == JsonValueKind.Object)
+            {
+                return CategoryFromMetadataItem(metadata);
+            }
+
+            return "";
+        }
+
+        private static string CategoryFromMetadataItem(JsonElement item)
+        {
+            var name = FirstNonEmpty(
+                item.GetStringOrNull("name"),
+                item.GetStringOrNull("label"),
+                item.GetStringOrNull("key"),
+                item.GetStringOrNull("title"));
+            if (string.IsNullOrWhiteSpace(name)) return "";
+            if (!LooksLikeCategoryField(name)) return "";
+
+            return FirstNonEmpty(
+                item.GetStringOrNull("value"),
+                item.GetStringOrNull("display_value"),
+                item.GetStringOrNull("displayValue"));
+        }
+
+        private static bool LooksLikeCategoryField(string name)
+        {
+            var normalized = name.Trim().ToLowerInvariant();
+            return normalized.Contains("department") ||
+                   normalized.Contains("team") ||
+                   normalized.Contains("function") ||
+                   normalized.Contains("job family") ||
+                   normalized.Contains("category");
+        }
+
+        private static string InferCategory(string text)
+        {
+            text ??= "";
+            if (Regex.IsMatch(text, @"\b(security|compliance|legal|privacy)\b", RegexOptions.IgnoreCase)) return "Legal / Security";
+            if (Regex.IsMatch(text, @"\b(data|analytics|business intelligence|machine learning|ai|ml)\b", RegexOptions.IgnoreCase)) return "Data / AI";
+            if (Regex.IsMatch(text, @"\b(engineer|developer|software|platform|infrastructure|devops|sre)\b", RegexOptions.IgnoreCase)) return "Engineering";
+            if (Regex.IsMatch(text, @"\b(product|design|designer|research)\b", RegexOptions.IgnoreCase)) return "Product / Design";
+            if (Regex.IsMatch(text, @"\b(sales|account executive|customer success|partnership)\b", RegexOptions.IgnoreCase)) return "Sales / Customer";
+            if (Regex.IsMatch(text, @"\b(marketing|growth|communications|brand)\b", RegexOptions.IgnoreCase)) return "Marketing";
+            if (Regex.IsMatch(text, @"\b(finance|accounting|controller|revenue|treasury)\b", RegexOptions.IgnoreCase)) return "Finance";
+            if (Regex.IsMatch(text, @"\b(people|recruit|talent|hr|human resources)\b", RegexOptions.IgnoreCase)) return "People";
+            if (Regex.IsMatch(text, @"\b(operations|ops|program manager|project manager)\b", RegexOptions.IgnoreCase)) return "Operations";
+
+            return "General";
+        }
+
+        private static string JobTypeFromMetadata(JsonElement job)
+        {
+            if (!job.TryGetProperty("metadata", out var metadata)) return "";
+            if (metadata.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var item in metadata.EnumerateArray())
+                {
+                    var value = JobTypeFromMetadataItem(item);
+                    if (!string.IsNullOrWhiteSpace(value)) return value;
+                }
+            }
+            else if (metadata.ValueKind == JsonValueKind.Object)
+            {
+                return JobTypeFromMetadataItem(metadata);
+            }
+
+            return "";
+        }
+
+        private static string JobTypeFromMetadataItem(JsonElement item)
+        {
+            var name = FirstNonEmpty(
+                item.GetStringOrNull("name"),
+                item.GetStringOrNull("label"),
+                item.GetStringOrNull("key"),
+                item.GetStringOrNull("title"));
+            if (string.IsNullOrWhiteSpace(name)) return "";
+            if (!LooksLikeJobTypeField(name)) return "";
+
+            return FirstNonEmpty(
+                item.GetStringOrNull("value"),
+                item.GetStringOrNull("display_value"),
+                item.GetStringOrNull("displayValue"));
+        }
+
+        private static bool LooksLikeJobTypeField(string name)
+        {
+            var normalized = name.Trim().ToLowerInvariant();
+            if (normalized.Contains("location")) return false;
+            return normalized.Contains("employment") ||
+                   normalized.Contains("job type") ||
+                   normalized.Contains("time type") ||
+                   normalized.Contains("worker type") ||
+                   normalized.Contains("position type") ||
+                   normalized.Contains("schedule");
+        }
+
+        private static string InferJobType(string text)
+        {
+            text ??= "";
+            if (Regex.IsMatch(text, @"\b(contract|contractor|contract-to-hire|c2h)\b", RegexOptions.IgnoreCase)) return "Contract";
+            if (Regex.IsMatch(text, @"\bpart[-\s]?time\b", RegexOptions.IgnoreCase)) return "Part time";
+            if (Regex.IsMatch(text, @"\b(temp|temporary)\b", RegexOptions.IgnoreCase)) return "Temporary";
+            if (Regex.IsMatch(text, @"\bintern(ship)?\b", RegexOptions.IgnoreCase)) return "Internship";
+            if (Regex.IsMatch(text, @"\bseasonal\b", RegexOptions.IgnoreCase)) return "Seasonal";
+            if (Regex.IsMatch(text, @"\bfreelance\b", RegexOptions.IgnoreCase)) return "Freelance";
+            if (Regex.IsMatch(text, @"\bper\s+diem\b", RegexOptions.IgnoreCase)) return "Per diem";
+            if (Regex.IsMatch(text, @"\bfull[-\s]?time\b", RegexOptions.IgnoreCase)) return "Full time";
+
+            return "Full time";
+        }
+
+        private static string NormalizeJobType(string value)
+        {
+            if (string.IsNullOrWhiteSpace(value)) return "";
+            return InferJobType(value) == "Full time" && !Regex.IsMatch(value, @"\bfull[-\s]?time\b", RegexOptions.IgnoreCase)
+                ? value.Trim()
+                : InferJobType(value);
+        }
+
+        private static string FirstNonEmpty(params string[] values)
+        {
+            foreach (var value in values)
+            {
+                if (!string.IsNullOrWhiteSpace(value)) return value.Trim();
+            }
+
+            return "";
         }
     }
 

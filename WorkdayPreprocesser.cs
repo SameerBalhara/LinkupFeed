@@ -14,12 +14,12 @@ namespace LinkupFeed
   
     public class WorkdayPreprocesser
     {
-        private readonly WorkdayScraperService _scraper;
-        private readonly SqlConnection _db;
-
         public async Task<List<ScrapedJob>> ProcessAllTenantsAsync(int? limitTenants = null)
         {
-            HttpClient client = new HttpClient();
+            HttpClient client = new HttpClient
+            {
+                Timeout = TimeSpan.FromSeconds(30)
+            };
             var results = new List<ScrapedJob>();
             WorkdayScraperService service = new WorkdayScraperService(client);
             var tenants = limitTenants.HasValue && limitTenants.Value > 0
@@ -40,17 +40,15 @@ namespace LinkupFeed
                        
 
                         var description = "";
-                        if (ItJobFilter.IsIt(job.Title, job.TimeType))
+                        WorkdayJobDetail workdayjobdetail = null;
+                        try
                         {
-                            try
-                            {
-                                var workdayjobdetail = await service.FetchJobDetailAsync(tenant, job.ExternalPath);
-                                description = CleanDescription(workdayjobdetail?.Description);
-                            }
-                            catch
-                            {
-                                description = "";
-                            }
+                            workdayjobdetail = await service.FetchJobDetailAsync(tenant, job.ExternalPath);
+                            description = CleanDescription(workdayjobdetail?.Description);
+                        }
+                        catch
+                        {
+                            description = "";
                         }
 
                         
@@ -64,9 +62,13 @@ namespace LinkupFeed
                             Location = job.Location,
                             Description = description,
                             JobUrl = applyUrl,
-                            JobType=job.TimeType,
+                            JobType = FirstNonEmpty(job.TimeType, workdayjobdetail?.TimeType, workdayjobdetail?.EmploymentType),
                             IsRemote = job.Location?.IndexOf("remote", StringComparison.OrdinalIgnoreCase) >= 0,
-                            DatePosted = DateTime.TryParse(job.PostedOn, out var dt) ? dt : (DateTime?)null
+                            DatePosted = ParseWorkdayDate(FirstNonEmpty(
+                                workdayjobdetail?.StartDate,
+                                job.StartDate,
+                                workdayjobdetail?.PostedOn,
+                                job.PostedOn))
                         });                       
                         inserted++;                
 
@@ -75,7 +77,7 @@ namespace LinkupFeed
 
                     Console.WriteLine($"  {tenant.Company}: {inserted} inserted, {skipped} skipped");
                 }
-                catch (HttpRequestException ex)
+                catch (Exception ex) when (ex is HttpRequestException || ex is TaskCanceledException || ex is OperationCanceledException)
                 {
                     // Some tenants return 401/422 — log and continue
                     Console.WriteLine($"  {tenant.Company}: FAILED — {ex.Message}");
@@ -85,6 +87,27 @@ namespace LinkupFeed
                 await Task.Delay(3000); // delay between companies
             }
             return results;
+        }
+
+        private static string FirstNonEmpty(params string[] values)
+        {
+            foreach (var value in values)
+            {
+                if (!string.IsNullOrWhiteSpace(value)) return value.Trim();
+            }
+
+            return "";
+        }
+
+        private static DateTime? ParseWorkdayDate(string value)
+        {
+            if (string.IsNullOrWhiteSpace(value)) return null;
+            var text = value.Trim();
+            if (text.Equals("Posted Today", StringComparison.OrdinalIgnoreCase) || text.Equals("Today", StringComparison.OrdinalIgnoreCase)) return DateTime.Today;
+            if (text.Equals("Posted Yesterday", StringComparison.OrdinalIgnoreCase) || text.Equals("Yesterday", StringComparison.OrdinalIgnoreCase)) return DateTime.Today.AddDays(-1);
+            var dayMatch = Regex.Match(text, @"Posted\s+(\d+)\+?\s+Days?\s+Ago", RegexOptions.IgnoreCase);
+            if (dayMatch.Success && int.TryParse(dayMatch.Groups[1].Value, out var days)) return DateTime.Today.AddDays(-days);
+            return DateTime.TryParse(text, out var parsed) ? parsed : null;
         }
 
         private static string CleanDescription(string value)

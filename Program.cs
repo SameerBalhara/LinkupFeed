@@ -41,7 +41,22 @@ namespace LinkupFeed
                 await AtsUrlDiscovery.RefreshAsync(
                     GetStringArg(args, "--input") ?? GetStringArg(args, "--job-sites"),
                     GetStringArg(args, "--output-root") ?? "outputs",
-                    GetIntArg(args, "--limit"));
+                    GetIntArg(args, "--limit"),
+                    GetStringArg(args, "--only") ?? GetStringArg(args, "--source"));
+                return;
+            }
+
+            if (args != null && args.Length > 0 &&
+                (string.Equals(args[0], "backfill-it-flags", StringComparison.OrdinalIgnoreCase) ||
+                 string.Equals(args[0], "backfill-it", StringComparison.OrdinalIgnoreCase)))
+            {
+                var connectionString = Environment.GetEnvironmentVariable(JobDatabaseSync.ConnectionStringEnvVar);
+                if (string.IsNullOrWhiteSpace(connectionString))
+                {
+                    throw new InvalidOperationException($"Set {JobDatabaseSync.ConnectionStringEnvVar} before backfilling IT flags.");
+                }
+
+                JobDatabaseSync.BackfillMissingItClassification(connectionString, "[IT-Backfill]");
                 return;
             }
 
@@ -99,6 +114,32 @@ namespace LinkupFeed
             }
 
             if (args != null && args.Length > 0 &&
+                (string.Equals(args[0], "jazzhr", StringComparison.OrdinalIgnoreCase) ||
+                 string.Equals(args[0], "applytojob", StringComparison.OrdinalIgnoreCase)))
+            {
+                await RunJazzHrOnlyAsync(
+                    HasArg(args, "--write-db") && !HasArg(args, "--dry-run") && !HasArg(args, "--no-write-db"),
+                    GetIntArg(args, "--limit") ?? GetIntArg(args, "--max-inserts"),
+                    GetStringArg(args, "--url-csv"),
+                    GetIntArg(args, "--limit-sites"),
+                    GetIntArg(args, "--max-jobs-per-site") ?? GetIntArg(args, "--limit-jobs-per-site"));
+                return;
+            }
+
+            if (args != null && args.Length > 0 &&
+                (string.Equals(args[0], "bamboohr", StringComparison.OrdinalIgnoreCase) ||
+                 string.Equals(args[0], "bamboo", StringComparison.OrdinalIgnoreCase)))
+            {
+                await RunBambooHrOnlyAsync(
+                    HasArg(args, "--write-db") && !HasArg(args, "--dry-run") && !HasArg(args, "--no-write-db"),
+                    GetIntArg(args, "--limit") ?? GetIntArg(args, "--max-inserts"),
+                    GetStringArg(args, "--url-csv"),
+                    GetIntArg(args, "--limit-sites"),
+                    GetIntArg(args, "--max-jobs-per-site") ?? GetIntArg(args, "--limit-jobs-per-site"));
+                return;
+            }
+
+            if (args != null && args.Length > 0 &&
                 string.Equals(args[0], "smartrecruiters", StringComparison.OrdinalIgnoreCase))
             {
                 await RunSmartRecruitersOnlyAsync(
@@ -137,7 +178,9 @@ namespace LinkupFeed
                     GetStringArg(args, "--only") ?? GetStringArg(args, "--source"),
                     GetIntArg(args, "--limit-sites"),
                     GetStringArg(args, "--workday-url-csv"),
-                    GetStringArg(args, "--icims-url-csv"));
+                    GetStringArg(args, "--icims-url-csv"),
+                    GetStringArg(args, "--jazzhr-url-csv"),
+                    GetStringArg(args, "--bamboohr-url-csv"));
                 return;
             }
 
@@ -154,10 +197,7 @@ namespace LinkupFeed
                 jobs = jobs.Where(j => UsLocationFilter.IsUs(j.Location)).ToList();
                 Console.WriteLine($"[Free scrapers] US filter: {freeBefore} -> {jobs.Count}");
 
-                // IT-only filter
-                int freeItBefore = jobs.Count;
-                jobs = jobs.Where(j => ItJobFilter.IsIt(j.Title, j.Category)).ToList();
-                Console.WriteLine($"[Free scrapers] IT filter: {freeItBefore} -> {jobs.Count}");
+                jobs = ClassifyJobsForFlagging(jobs, "Free scrapers");
 
                 // Plug into your existing ETL:
                 int freeOk = 0, freeFail = 0;
@@ -185,9 +225,7 @@ namespace LinkupFeed
                 workdayjobs = workdayjobs.Where(j => UsLocationFilter.IsUs(j.Location)).ToList();
                 Console.WriteLine($"[Workday] US filter: {wdBefore} -> {workdayjobs.Count}");
 
-                int wdItBefore = workdayjobs.Count;
-                workdayjobs = workdayjobs.Where(j => ItJobFilter.IsIt(j.Title, j.Category)).ToList();
-                Console.WriteLine($"[Workday] IT filter: {wdItBefore} -> {workdayjobs.Count}");
+                workdayjobs = ClassifyJobsForFlagging(workdayjobs, "Workday");
 
                 int wdOk = 0, wdFail = 0;
                 foreach (var job in workdayjobs)
@@ -213,9 +251,7 @@ namespace LinkupFeed
                 sfJobs = sfJobs.Where(j => UsLocationFilter.IsUs(j.Location)).ToList();
                 Console.WriteLine($"[SuccessFactors] US filter: {sfBefore} -> {sfJobs.Count}");
 
-                int sfItBefore = sfJobs.Count;
-                sfJobs = sfJobs.Where(j => ItJobFilter.IsIt(j.Title, j.Category)).ToList();
-                Console.WriteLine($"[SuccessFactors] IT filter: {sfItBefore} -> {sfJobs.Count}");
+                sfJobs = ClassifyJobsForFlagging(sfJobs, "SuccessFactors");
 
                 int sfOk = 0, sfFail = 0;
                 foreach (var job in sfJobs)
@@ -241,9 +277,7 @@ namespace LinkupFeed
                 leverJobs = leverJobs.Where(j => UsLocationFilter.IsUs(j.Location) || j.IsRemote == true).ToList();
                 Console.WriteLine($"[Lever] US filter: {lvBefore} -> {leverJobs.Count}");
 
-                int lvItBefore = leverJobs.Count;
-                leverJobs = leverJobs.Where(j => ItJobFilter.IsIt(j.Title, j.Category)).ToList();
-                Console.WriteLine($"[Lever] IT filter: {lvItBefore} -> {leverJobs.Count}");
+                leverJobs = ClassifyJobsForFlagging(leverJobs, "Lever");
 
                 int lvOk = 0, lvFail = 0;
                 foreach (var job in leverJobs)
@@ -269,9 +303,7 @@ namespace LinkupFeed
                 ashbyJobs = ashbyJobs.Where(j => UsLocationFilter.IsUs(j.Location) || j.IsRemote == true).ToList();
                 Console.WriteLine($"[Ashby] US filter: {ashbyBefore} -> {ashbyJobs.Count}");
 
-                int ashbyItBefore = ashbyJobs.Count;
-                ashbyJobs = ashbyJobs.Where(j => ItJobFilter.IsIt(j.Title, j.Category)).ToList();
-                Console.WriteLine($"[Ashby] IT filter: {ashbyItBefore} -> {ashbyJobs.Count}");
+                ashbyJobs = ClassifyJobsForFlagging(ashbyJobs, "Ashby");
 
                 int ashbyOk = 0, ashbyFail = 0;
                 foreach (var job in ashbyJobs)
@@ -308,7 +340,7 @@ namespace LinkupFeed
 
         }
 
-        private static async System.Threading.Tasks.Task RunAllScrapersWithDedupeAsync(bool writeToDatabase, int? insertLimit, string onlySource, int? limitSites, string workdayUrlCsv, string icimsUrlCsv)
+        private static async System.Threading.Tasks.Task RunAllScrapersWithDedupeAsync(bool writeToDatabase, int? insertLimit, string onlySource, int? limitSites, string workdayUrlCsv, string icimsUrlCsv, string jazzHrUrlCsv, string bambooHrUrlCsv)
         {
             var connectionString = Environment.GetEnvironmentVariable(JobDatabaseSync.ConnectionStringEnvVar);
             if (string.IsNullOrWhiteSpace(connectionString))
@@ -348,6 +380,24 @@ namespace LinkupFeed
                     allJobs,
                     "iCIMS",
                     () => new IcimsScraper().FetchJobsAsync(icimsUrlCsv, limitSites),
+                    includeRemoteWithoutUsLocation: true);
+            }
+
+            if (ShouldRunSource(onlySource, "JazzHR", "jazz", "applytojob", "apply-to-job"))
+            {
+                await AddFilteredJobsAsync(
+                    allJobs,
+                    "JazzHR",
+                    () => new JazzHrScraper().FetchJobsAsync(jazzHrUrlCsv, limitSites),
+                    includeRemoteWithoutUsLocation: true);
+            }
+
+            if (ShouldRunSource(onlySource, "BambooHR", "bamboo"))
+            {
+                await AddFilteredJobsAsync(
+                    allJobs,
+                    "BambooHR",
+                    () => new BambooHrScraper().FetchJobsAsync(bambooHrUrlCsv, limitSites),
                     includeRemoteWithoutUsLocation: true);
             }
 
@@ -447,8 +497,8 @@ namespace LinkupFeed
                     Console.WriteLine($"[All] Insert limit enabled: {jobsToInsert.Count} of {deduped.NewJobs.Count} deduped jobs will be inserted.");
                 }
 
-                Console.WriteLine("[All] WRITE MODE ENABLED. Inserting deduped jobs into database...");
-                JobDatabaseSync.InsertJobs(connectionString, jobsToInsert, "[All]");
+                Console.WriteLine("[All] WRITE MODE ENABLED. Refreshing existing duplicates and inserting new jobs into database...");
+                WriteDedupeResultToDatabase(connectionString, deduped, jobsToInsert, insertLimit, "[All]");
             }
             else
             {
@@ -474,15 +524,70 @@ namespace LinkupFeed
                     .ToList();
                 Console.WriteLine($"[{label}] US/remote filter: {locationBefore} -> {jobs.Count}");
 
-                int itBefore = jobs.Count;
-                jobs = jobs.Where(j => ItJobFilter.IsIt(j.Title, j.Category)).ToList();
-                Console.WriteLine($"[{label}] IT filter: {itBefore} -> {jobs.Count}");
+                jobs = ClassifyJobsForFlagging(jobs, label);
+                PrintJobTypeSummary(label, jobs);
 
                 allJobs.AddRange(jobs);
             }
             catch (Exception ex)
             {
                 Console.WriteLine($"[{label}] FAILED: {ex.Message}");
+            }
+        }
+
+        private static List<ScrapedJob> ClassifyJobsForFlagging(List<ScrapedJob> jobs, string label)
+        {
+            foreach (var job in jobs)
+            {
+                ItJobFilter.Apply(job);
+            }
+
+            var itJobs = jobs.Where(j => j.IsIT).ToList();
+            var nonItJobs = jobs.Where(j => !j.IsIT).ToList();
+
+            Console.WriteLine($"[{label}] IT classification: {jobs.Count} total -> {itJobs.Count} IT, {nonItJobs.Count} non-IT; keeping both with flags");
+            PrintClassificationSamples(label, itJobs, nonItJobs);
+            return jobs;
+        }
+
+        private static void PrintJobTypeSummary(string label, List<ScrapedJob> jobs)
+        {
+            var missing = jobs.Count(j => string.IsNullOrWhiteSpace(j.JobType));
+            var populated = jobs.Count - missing;
+            var pct = jobs.Count == 0 ? 0 : Math.Round(100.0 * populated / jobs.Count, 2);
+            Console.WriteLine($"[{label}] Job type coverage: {populated}/{jobs.Count} populated ({pct}%). Missing={missing}");
+
+            var missingCategory = jobs.Count(j => string.IsNullOrWhiteSpace(j.Category));
+            var populatedCategory = jobs.Count - missingCategory;
+            var categoryPct = jobs.Count == 0 ? 0 : Math.Round(100.0 * populatedCategory / jobs.Count, 2);
+            Console.WriteLine($"[{label}] Category coverage: {populatedCategory}/{jobs.Count} populated ({categoryPct}%). Missing={missingCategory}");
+
+            var missingPosted = jobs.Count(j => !j.DatePosted.HasValue);
+            var populatedPosted = jobs.Count - missingPosted;
+            var postedPct = jobs.Count == 0 ? 0 : Math.Round(100.0 * populatedPosted / jobs.Count, 2);
+            Console.WriteLine($"[{label}] Posted date coverage: {populatedPosted}/{jobs.Count} populated ({postedPct}%). Missing={missingPosted}");
+
+            foreach (var group in jobs
+                .Where(j => !string.IsNullOrWhiteSpace(j.JobType))
+                .GroupBy(j => j.JobType.Trim(), StringComparer.OrdinalIgnoreCase)
+                .OrderByDescending(g => g.Count())
+                .ThenBy(g => g.Key)
+                .Take(5))
+            {
+                Console.WriteLine($"[{label}] Job type sample: {group.Key} = {group.Count()}");
+            }
+        }
+
+        private static void PrintClassificationSamples(string label, List<ScrapedJob> itJobs, List<ScrapedJob> nonItJobs)
+        {
+            foreach (var job in itJobs.Take(3))
+            {
+                Console.WriteLine($"[{label}] IT sample +{job.ITScore}: {job.Title} | {job.Company}");
+            }
+
+            foreach (var job in nonItJobs.Take(3))
+            {
+                Console.WriteLine($"[{label}] Non-IT sample {job.ITScore}: {job.Title} | {job.Company}");
             }
         }
 
@@ -545,6 +650,27 @@ namespace LinkupFeed
             return null;
         }
 
+        private static void WriteDedupeResultToDatabase(
+            string connectionString,
+            JobDatabaseSync.DedupeResult deduped,
+            List<ScrapedJob> jobsToInsert,
+            int? writeLimit,
+            string logPrefix)
+        {
+            var duplicateJobsToUpdate = writeLimit.HasValue
+                ? deduped.DbDuplicateJobs.Take(writeLimit.Value).ToList()
+                : deduped.DbDuplicateJobs;
+
+            if (writeLimit.HasValue && duplicateJobsToUpdate.Count < deduped.DbDuplicateJobs.Count)
+            {
+                Console.WriteLine($"{logPrefix} Duplicate update limit enabled: {duplicateJobsToUpdate.Count} of {deduped.DbDuplicateJobs.Count}");
+            }
+
+            JobDatabaseSync.UpdateExistingJobs(connectionString, duplicateJobsToUpdate, logPrefix);
+            JobDatabaseSync.InsertJobs(connectionString, jobsToInsert, logPrefix);
+            JobDatabaseSync.BackfillMissingItClassification(connectionString, logPrefix);
+        }
+
         private static async System.Threading.Tasks.Task RunSuccessFactorsOnlyAsync()
         {
             Console.WriteLine("[SF-Only] Starting scraper...");
@@ -555,9 +681,7 @@ namespace LinkupFeed
             jobs = jobs.Where(j => UsLocationFilter.IsUs(j.Location)).ToList();
             Console.WriteLine($"[SF-Only] US filter: {before} -> {jobs.Count}");
 
-            int itBefore = jobs.Count;
-            jobs = jobs.Where(j => ItJobFilter.IsIt(j.Title, j.Category)).ToList();
-            Console.WriteLine($"[SF-Only] IT filter: {itBefore} -> {jobs.Count}");
+            jobs = ClassifyJobsForFlagging(jobs, "SF-Only");
 
             foreach (var j in jobs.Take(10))
                 Console.WriteLine($"  - [{j.Company}] {j.Title} | {j.Location} | {j.JobUrl}");
@@ -594,9 +718,7 @@ namespace LinkupFeed
             jobs = jobs.Where(j => UsLocationFilter.IsUs(j.Location) || j.IsRemote == true).ToList();
             Console.WriteLine($"[Lever-Only] US filter: {before} -> {jobs.Count}");
 
-            int itBefore = jobs.Count;
-            jobs = jobs.Where(j => ItJobFilter.IsIt(j.Title, j.Category)).ToList();
-            Console.WriteLine($"[Lever-Only] IT filter: {itBefore} -> {jobs.Count}");
+            jobs = ClassifyJobsForFlagging(jobs, "Lever-Only");
 
             foreach (var j in jobs.Take(10))
                 Console.WriteLine($"  - [{j.Company}] {j.Title} | {j.Location} | {j.JobUrl}");
@@ -633,9 +755,7 @@ namespace LinkupFeed
             jobs = jobs.Where(j => UsLocationFilter.IsUs(j.Location) || j.IsRemote == true).ToList();
             Console.WriteLine($"[Ashby-Only] US filter: {before} -> {jobs.Count}");
 
-            int itBefore = jobs.Count;
-            jobs = jobs.Where(j => ItJobFilter.IsIt(j.Title, j.Category)).ToList();
-            Console.WriteLine($"[Ashby-Only] IT filter: {itBefore} -> {jobs.Count}");
+            jobs = ClassifyJobsForFlagging(jobs, "Ashby-Only");
 
             foreach (var j in jobs.Take(10))
                 Console.WriteLine($"  - [{j.Company}] {j.Title} | {j.Location} | {j.JobUrl}");
@@ -673,8 +793,8 @@ namespace LinkupFeed
                 Console.WriteLine($"[Ashby-Only] Insert limit enabled: {jobsToInsert.Count} of {deduped.NewJobs.Count} deduped jobs will be inserted.");
             }
 
-            Console.WriteLine("[Ashby-Only] WRITE MODE ENABLED. Inserting deduped jobs into database...");
-            JobDatabaseSync.InsertJobs(connectionString, jobsToInsert, "[Ashby-Only]");
+            Console.WriteLine("[Ashby-Only] WRITE MODE ENABLED. Refreshing existing duplicates and inserting new jobs into database...");
+            WriteDedupeResultToDatabase(connectionString, deduped, jobsToInsert, insertLimit, "[Ashby-Only]");
         }
 
         private static async System.Threading.Tasks.Task<List<ScrapedJob>> FetchCombinedWorkdayJobsAsync(string inputCsv, int? limitSites)
@@ -684,17 +804,6 @@ namespace LinkupFeed
             var discoveredJobs = await new WorkdayScraper().FetchJobsAsync(inputCsv, limitSites);
             Console.WriteLine($"[Workday] CSV-discovered pipeline returned {discoveredJobs.Count} jobs.");
             combined.AddRange(discoveredJobs);
-
-            try
-            {
-                var legacyJobs = await new WorkdayPreprocesser().ProcessAllTenantsAsync(limitSites);
-                Console.WriteLine($"[Workday] Legacy tenant pipeline returned {legacyJobs.Count} jobs.");
-                combined.AddRange(legacyJobs);
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"[Workday] Legacy tenant pipeline error: {ex.Message}");
-            }
 
             Console.WriteLine($"[Workday] Combined Workday jobs before shared filters/dedupe: {combined.Count}");
             return combined;
@@ -719,6 +828,26 @@ namespace LinkupFeed
                 includeRemoteWithoutUsLocation: true);
         }
 
+        private static async System.Threading.Tasks.Task RunJazzHrOnlyAsync(bool writeToDatabase, int? insertLimit, string inputCsv, int? limitSites, int? maxJobsPerSite)
+        {
+            await RunSingleScraperWithDedupeAsync(
+                "JazzHR-Only",
+                () => new JazzHrScraper().FetchJobsAsync(inputCsv, limitSites, maxJobsPerSite ?? 0),
+                writeToDatabase,
+                insertLimit,
+                includeRemoteWithoutUsLocation: true);
+        }
+
+        private static async System.Threading.Tasks.Task RunBambooHrOnlyAsync(bool writeToDatabase, int? insertLimit, string inputCsv, int? limitSites, int? maxJobsPerSite)
+        {
+            await RunSingleScraperWithDedupeAsync(
+                "BambooHR-Only",
+                () => new BambooHrScraper().FetchJobsAsync(inputCsv, limitSites, maxJobsPerSite ?? 0),
+                writeToDatabase,
+                insertLimit,
+                includeRemoteWithoutUsLocation: true);
+        }
+
         private static async System.Threading.Tasks.Task RunSingleScraperWithDedupeAsync(
             string label,
             Func<System.Threading.Tasks.Task<List<ScrapedJob>>> fetch,
@@ -734,9 +863,8 @@ namespace LinkupFeed
             jobs = jobs.Where(j => UsLocationFilter.IsUs(j.Location) || (includeRemoteWithoutUsLocation && j.IsRemote)).ToList();
             Console.WriteLine($"[{label}] US/remote filter: {before} -> {jobs.Count}");
 
-            int itBefore = jobs.Count;
-            jobs = jobs.Where(j => ItJobFilter.IsIt(j.Title, j.Category)).ToList();
-            Console.WriteLine($"[{label}] IT filter: {itBefore} -> {jobs.Count}");
+            jobs = ClassifyJobsForFlagging(jobs, label);
+            PrintJobTypeSummary(label, jobs);
 
             foreach (var j in jobs.Take(10))
                 Console.WriteLine($"  - [{j.Company}] {j.Title} | {j.Location} | {j.JobUrl}");
@@ -768,8 +896,8 @@ namespace LinkupFeed
                 Console.WriteLine($"[{label}] Insert limit enabled: {jobsToInsert.Count} of {deduped.NewJobs.Count} deduped jobs will be inserted.");
             }
 
-            Console.WriteLine($"[{label}] WRITE MODE ENABLED. Inserting deduped jobs into database...");
-            JobDatabaseSync.InsertJobs(connectionString, jobsToInsert, $"[{label}]");
+            Console.WriteLine($"[{label}] WRITE MODE ENABLED. Refreshing existing duplicates and inserting new jobs into database...");
+            WriteDedupeResultToDatabase(connectionString, deduped, jobsToInsert, insertLimit, $"[{label}]");
         }
         private static async System.Threading.Tasks.Task RunSmartRecruitersOnlyAsync(bool writeToDatabase, int? insertLimit, string onlyCompany)
         {
@@ -781,9 +909,7 @@ namespace LinkupFeed
             jobs = jobs.Where(j => UsLocationFilter.IsUs(j.Location) || j.IsRemote == true).ToList();
             Console.WriteLine($"[SmartRecruiters-Only] US filter: {before} -> {jobs.Count}");
 
-            int itBefore = jobs.Count;
-            jobs = jobs.Where(j => ItJobFilter.IsIt(j.Title, j.Category)).ToList();
-            Console.WriteLine($"[SmartRecruiters-Only] IT filter: {itBefore} -> {jobs.Count}");
+            jobs = ClassifyJobsForFlagging(jobs, "SmartRecruiters-Only");
 
             foreach (var j in jobs.Take(10))
                 Console.WriteLine($"  - [{j.Company}] {j.Title} | {j.Location} | {j.JobUrl}");
@@ -821,8 +947,8 @@ namespace LinkupFeed
                 Console.WriteLine($"[SmartRecruiters-Only] Insert limit enabled: {jobsToInsert.Count} of {deduped.NewJobs.Count} deduped jobs will be inserted.");
             }
 
-            Console.WriteLine("[SmartRecruiters-Only] WRITE MODE ENABLED. Inserting deduped jobs into database...");
-            JobDatabaseSync.InsertJobs(connectionString, jobsToInsert, "[SmartRecruiters-Only]");
+            Console.WriteLine("[SmartRecruiters-Only] WRITE MODE ENABLED. Refreshing existing duplicates and inserting new jobs into database...");
+            WriteDedupeResultToDatabase(connectionString, deduped, jobsToInsert, insertLimit, "[SmartRecruiters-Only]");
         }
 
         private static async System.Threading.Tasks.Task RunDayforceOnlyAsync(bool writeToDatabase, int? insertLimit, string onlyCompany)
@@ -835,9 +961,7 @@ namespace LinkupFeed
             jobs = jobs.Where(j => UsLocationFilter.IsUs(j.Location) || j.IsRemote == true).ToList();
             Console.WriteLine($"[Dayforce-Only] US filter: {before} -> {jobs.Count}");
 
-            int itBefore = jobs.Count;
-            jobs = jobs.Where(j => ItJobFilter.IsIt(j.Title, j.Category)).ToList();
-            Console.WriteLine($"[Dayforce-Only] IT filter: {itBefore} -> {jobs.Count}");
+            jobs = ClassifyJobsForFlagging(jobs, "Dayforce-Only");
 
             foreach (var j in jobs.Take(10))
                 Console.WriteLine($"  - [{j.Company}] {j.Title} | {j.Location} | {j.JobUrl}");
@@ -875,8 +999,8 @@ namespace LinkupFeed
                 Console.WriteLine($"[Dayforce-Only] Insert limit enabled: {jobsToInsert.Count} of {deduped.NewJobs.Count} deduped jobs will be inserted.");
             }
 
-            Console.WriteLine("[Dayforce-Only] WRITE MODE ENABLED. Inserting deduped jobs into database...");
-            JobDatabaseSync.InsertJobs(connectionString, jobsToInsert, "[Dayforce-Only]");
+            Console.WriteLine("[Dayforce-Only] WRITE MODE ENABLED. Refreshing existing duplicates and inserting new jobs into database...");
+            WriteDedupeResultToDatabase(connectionString, deduped, jobsToInsert, insertLimit, "[Dayforce-Only]");
         }
 
         private static async System.Threading.Tasks.Task RunRecruiteeOnlyAsync(bool writeToDatabase, int? insertLimit, string onlyCompany)
@@ -889,9 +1013,7 @@ namespace LinkupFeed
             jobs = jobs.Where(j => UsLocationFilter.IsUs(j.Location) || j.IsRemote == true).ToList();
             Console.WriteLine($"[Recruitee-Only] US filter: {before} -> {jobs.Count}");
 
-            int itBefore = jobs.Count;
-            jobs = jobs.Where(j => ItJobFilter.IsIt(j.Title, j.Category)).ToList();
-            Console.WriteLine($"[Recruitee-Only] IT filter: {itBefore} -> {jobs.Count}");
+            jobs = ClassifyJobsForFlagging(jobs, "Recruitee-Only");
 
             foreach (var j in jobs.Take(10))
                 Console.WriteLine($"  - [{j.Company}] {j.Title} | {j.Location} | {j.JobUrl}");
@@ -929,8 +1051,8 @@ namespace LinkupFeed
                 Console.WriteLine($"[Recruitee-Only] Insert limit enabled: {jobsToInsert.Count} of {deduped.NewJobs.Count} deduped jobs will be inserted.");
             }
 
-            Console.WriteLine("[Recruitee-Only] WRITE MODE ENABLED. Inserting deduped jobs into database...");
-            JobDatabaseSync.InsertJobs(connectionString, jobsToInsert, "[Recruitee-Only]");
+            Console.WriteLine("[Recruitee-Only] WRITE MODE ENABLED. Refreshing existing duplicates and inserting new jobs into database...");
+            WriteDedupeResultToDatabase(connectionString, deduped, jobsToInsert, insertLimit, "[Recruitee-Only]");
         }
 
         private static async System.Threading.Tasks.Task RunTaleoOnlyAsync()
@@ -943,9 +1065,7 @@ namespace LinkupFeed
             jobs = jobs.Where(j => UsLocationFilter.IsUs(j.Location)).ToList();
             Console.WriteLine($"[Taleo-Only] US filter: {before} -> {jobs.Count}");
 
-            int itBefore = jobs.Count;
-            jobs = jobs.Where(j => ItJobFilter.IsIt(j.Title, j.Category)).ToList();
-            Console.WriteLine($"[Taleo-Only] IT filter: {itBefore} -> {jobs.Count}");
+            jobs = ClassifyJobsForFlagging(jobs, "Taleo-Only");
 
             foreach (var j in jobs.Take(10))
                 Console.WriteLine($"  - [{j.Company}] {j.Title} | {j.Location} | {j.JobUrl}");

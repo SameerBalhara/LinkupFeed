@@ -27,6 +27,7 @@ namespace LinkupFeed
         [JsonPropertyName("externalPath")] public string ExternalPath { get; set; }
         [JsonPropertyName("locationsText")] public string Location { get; set; }
         [JsonPropertyName("postedOn")] public string PostedOn { get; set; }
+        [JsonPropertyName("startDate")] public string StartDate { get; set; }
         [JsonPropertyName("jobReqId")] public string JobReqId { get; set; }
         [JsonPropertyName("employmentType")] public string EmploymentType { get; set; }
         [JsonPropertyName("timeType")] public string TimeType { get; set; }

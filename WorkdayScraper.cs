@@ -103,10 +103,10 @@ namespace LinkupFeed
                         var job = MapJob(row, posting);
                         if (job != null)
                         {
-                            if (ItJobFilter.IsIt(job.Title, job.Category))
-                            {
-                                job.Description = await FetchDescriptionAsync(row, GetText(posting, "externalPath") ?? "");
-                            }
+                            var detail = await FetchDetailAsync(row, GetText(posting, "externalPath") ?? "");
+                            job.Description = detail.Description;
+                            job.JobType = FirstNonEmpty(job.JobType, detail.JobType);
+                            job.DatePosted = job.DatePosted ?? detail.DatePosted;
 
                             jobs.Add(job);
                         }
@@ -150,15 +150,16 @@ namespace LinkupFeed
                 Description = "",
                 JobUrl = JobUrl(row, externalPath),
                 IsRemote = remote,
-                DatePosted = ParseDate(GetText(job, "postedOn")),
+                DatePosted = ParseDate(FirstNonEmpty(GetText(job, "startDate"), GetText(job, "postedOn"))),
                 JobType = GetText(job, "timeType") ?? GetText(job, "employmentType"),
                 Category = category
             };
         }
 
-        private static async Task<string> FetchDescriptionAsync(Dictionary<string, string> row, string externalPath)
+        private static async Task<WorkdayDetailSnapshot> FetchDetailAsync(Dictionary<string, string> row, string externalPath)
         {
-            if (string.IsNullOrWhiteSpace(externalPath)) return "";
+            var detail = new WorkdayDetailSnapshot();
+            if (string.IsNullOrWhiteSpace(externalPath)) return detail;
 
             try
             {
@@ -167,7 +168,7 @@ namespace LinkupFeed
                 request.Headers.Referrer = new Uri(JobUrl(row, externalPath));
 
                 using var response = await _http.SendAsync(request);
-                if (!response.IsSuccessStatusCode) return "";
+                if (!response.IsSuccessStatusCode) return detail;
 
                 using var doc = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
                 var root = doc.RootElement;
@@ -175,15 +176,40 @@ namespace LinkupFeed
                 if (root.TryGetProperty("jobPostingInfo", out var info))
                 {
                     var description = GetText(info, "jobDescription");
-                    if (!string.IsNullOrWhiteSpace(description)) return CleanDescription(description);
+                    if (!string.IsNullOrWhiteSpace(description))
+                    {
+                        detail.Description = CleanDescription(description);
+                    }
+
+                    detail.JobType = FirstNonEmpty(
+                        GetTextOrDescriptor(info, "timeType"),
+                        GetTextOrDescriptor(info, "employmentType"),
+                        GetTextOrDescriptor(info, "workerSubType"));
+                    detail.DatePosted = ParseDate(FirstNonEmpty(
+                        GetText(info, "startDate"),
+                        GetText(info, "postedOn")));
                 }
 
                 var rootDescription = GetText(root, "jobDescription");
-                return string.IsNullOrWhiteSpace(rootDescription) ? "" : CleanDescription(rootDescription);
+                if (string.IsNullOrWhiteSpace(detail.Description) && !string.IsNullOrWhiteSpace(rootDescription))
+                {
+                    detail.Description = CleanDescription(rootDescription);
+                }
+
+                detail.JobType = FirstNonEmpty(
+                    detail.JobType,
+                    GetTextOrDescriptor(root, "timeType"),
+                    GetTextOrDescriptor(root, "employmentType"),
+                    GetTextOrDescriptor(root, "workerSubType"));
+                detail.DatePosted = detail.DatePosted ?? ParseDate(FirstNonEmpty(
+                    GetText(root, "startDate"),
+                    GetText(root, "postedOn")));
+
+                return detail;
             }
             catch
             {
-                return "";
+                return detail;
             }
         }
 
@@ -288,7 +314,7 @@ namespace LinkupFeed
             var text = value.Trim();
             if (text.Equals("Posted Today", StringComparison.OrdinalIgnoreCase) || text.Equals("Today", StringComparison.OrdinalIgnoreCase)) return DateTime.Today;
             if (text.Equals("Posted Yesterday", StringComparison.OrdinalIgnoreCase) || text.Equals("Yesterday", StringComparison.OrdinalIgnoreCase)) return DateTime.Today.AddDays(-1);
-            var dayMatch = Regex.Match(text, @"Posted\s+(\d+)\s+Days?\s+Ago", RegexOptions.IgnoreCase);
+            var dayMatch = Regex.Match(text, @"Posted\s+(\d+)\+?\s+Days?\s+Ago", RegexOptions.IgnoreCase);
             if (dayMatch.Success && int.TryParse(dayMatch.Groups[1].Value, out var days)) return DateTime.Today.AddDays(-days);
             return DateTime.TryParse(text, out var parsed) ? parsed : null;
         }
@@ -304,6 +330,27 @@ namespace LinkupFeed
                 JsonValueKind.False => "false",
                 _ => null
             };
+        }
+
+        private static string GetTextOrDescriptor(JsonElement element, string property)
+        {
+            if (!element.TryGetProperty(property, out var value)) return null;
+            if (value.ValueKind == JsonValueKind.Object)
+            {
+                return GetText(value, "descriptor") ?? GetText(value, "name") ?? GetText(value, "value");
+            }
+
+            return GetText(element, property);
+        }
+
+        private static string FirstNonEmpty(params string[] values)
+        {
+            foreach (var value in values)
+            {
+                if (!string.IsNullOrWhiteSpace(value)) return value.Trim();
+            }
+
+            return "";
         }
 
         private static int? GetInt(JsonElement element, string property)
@@ -339,6 +386,13 @@ namespace LinkupFeed
                 if (seen.Add(key)) results.Add(job);
             }
             return results;
+        }
+
+        private sealed class WorkdayDetailSnapshot
+        {
+            public string Description { get; set; } = "";
+            public string JobType { get; set; } = "";
+            public DateTime? DatePosted { get; set; }
         }
     }
 }

@@ -16,6 +16,9 @@ namespace LinkupFeed
         private static readonly Regex WorkdayDomainPattern = new Regex(@"^(?<tenant>[^.]+)\.(?<server>wd\d+)\.myworkdayjobs\.com$", RegexOptions.IgnoreCase | RegexOptions.Compiled);
         private static readonly Regex IcimsDomainPattern = new Regex(@"(^|\.)icims\.com$", RegexOptions.IgnoreCase | RegexOptions.Compiled);
         private static readonly Regex JobLinkPattern = new Regex("href=[\"'](?<href>[^\"']*/jobs/(?<job_id>\\d+)(?:/[^\"']*)?/job[^\"']*)[\"']", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+        private static readonly Regex JazzHrDomainPattern = new Regex(@"(^|\.)applytojob\.com$|(^|\.)jazzhr\.com$", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+        private static readonly Regex JazzHrJobLinkPattern = new Regex("href=[\"'](?<href>[^\"']*/apply/(?<job_id>[A-Za-z0-9]+)(?:/[^\"']*)?)[\"']", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+        private static readonly Regex BambooHrDomainPattern = new Regex(@"(^|\.)bamboohr\.com$", RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
         private static readonly string[] WorkdaySiteCandidates =
         {
@@ -40,10 +43,14 @@ namespace LinkupFeed
             }
         };
 
-        public static async Task RefreshAsync(string inputCsv, string outputRoot, int? limitDomains)
+        public static async Task RefreshAsync(string inputCsv, string outputRoot, int? limitDomains, string onlySource = null)
         {
             inputCsv = string.IsNullOrWhiteSpace(inputCsv) ? Path.Combine("input", "JobSites.csv") : inputCsv;
             outputRoot = string.IsNullOrWhiteSpace(outputRoot) ? "outputs" : outputRoot;
+            var runWorkday = ShouldRefreshSource(onlySource, "Workday");
+            var runIcims = ShouldRefreshSource(onlySource, "iCIMS", "icims");
+            var runJazzHr = ShouldRefreshSource(onlySource, "JazzHR", "jazz", "applytojob", "apply-to-job");
+            var runBambooHr = ShouldRefreshSource(onlySource, "BambooHR", "bamboo");
 
             var rows = AtsCsv.ReadRows(inputCsv);
             var domains = rows
@@ -59,44 +66,86 @@ namespace LinkupFeed
 
             var workdayRows = new List<Dictionary<string, string>>();
             var icimsRows = new List<Dictionary<string, string>>();
+            var jazzHrRows = new List<Dictionary<string, string>>();
+            var bambooHrRows = new List<Dictionary<string, string>>();
 
             int sourceRow = 1;
             foreach (var domain in domains)
             {
                 sourceRow++;
                 var workdayMatch = WorkdayDomainPattern.Match(domain);
-                if (workdayMatch.Success)
+                if (runWorkday && workdayMatch.Success)
                 {
                     var result = await DiscoverWorkdayAsync(sourceRow, domain, workdayMatch.Groups["tenant"].Value, workdayMatch.Groups["server"].Value);
                     if (result != null) workdayRows.Add(result);
                     continue;
                 }
 
-                if (IcimsDomainPattern.IsMatch(domain))
+                if (runIcims && IcimsDomainPattern.IsMatch(domain))
                 {
                     var result = await DiscoverIcimsAsync(sourceRow, domain);
                     if (result != null) icimsRows.Add(result);
                     continue;
                 }
+
+                if (runJazzHr && JazzHrDomainPattern.IsMatch(domain))
+                {
+                    var result = await DiscoverJazzHrAsync(sourceRow, domain);
+                    if (result != null) jazzHrRows.Add(result);
+                    continue;
+                }
+
+                if (runBambooHr && BambooHrDomainPattern.IsMatch(domain))
+                {
+                    var result = await DiscoverBambooHrAsync(sourceRow, domain);
+                    if (result != null) bambooHrRows.Add(result);
+                    continue;
+                }
             }
 
-            var workdayDir = Path.Combine(outputRoot, "workday_discovery");
-            var icimsDir = Path.Combine(outputRoot, "icims_jobs");
-            Directory.CreateDirectory(workdayDir);
-            Directory.CreateDirectory(icimsDir);
+            if (runWorkday)
+            {
+                var workdayDir = Path.Combine(outputRoot, "workday_discovery");
+                Directory.CreateDirectory(workdayDir);
+                WriteCsv(
+                    Path.Combine(workdayDir, "workday_discovery_valid_latest.csv"),
+                    workdayRows,
+                    new[] { "source_row", "original_domain", "domain", "tenant", "wd_server", "site", "api_url", "careers_url", "status_code", "final_url", "validated", "total_jobs", "sample_title", "error", "candidate_count", "attempted_sites", "discovery_notes", "elapsed_seconds" });
+                Console.WriteLine($"[URL Refresh] Workday valid URLs: {workdayRows.Count}");
+            }
 
-            WriteCsv(
-                Path.Combine(workdayDir, "workday_discovery_valid_latest.csv"),
-                workdayRows,
-                new[] { "source_row", "original_domain", "domain", "tenant", "wd_server", "site", "api_url", "careers_url", "status_code", "final_url", "validated", "total_jobs", "sample_title", "error", "candidate_count", "attempted_sites", "discovery_notes", "elapsed_seconds" });
+            if (runIcims)
+            {
+                var icimsDir = Path.Combine(outputRoot, "icims_jobs");
+                Directory.CreateDirectory(icimsDir);
+                WriteCsv(
+                    Path.Combine(icimsDir, "icims_link_counts_latest.csv"),
+                    icimsRows,
+                    new[] { "domain", "search_url", "pages_fetched", "job_links_found", "sample_job_url", "error", "elapsed_seconds" });
+                Console.WriteLine($"[URL Refresh] iCIMS valid URLs: {icimsRows.Count}");
+            }
 
-            WriteCsv(
-                Path.Combine(icimsDir, "icims_link_counts_latest.csv"),
-                icimsRows,
-                new[] { "domain", "search_url", "pages_fetched", "job_links_found", "sample_job_url", "error", "elapsed_seconds" });
+            if (runJazzHr)
+            {
+                var jazzHrDir = Path.Combine(outputRoot, "jazzhr_jobs");
+                Directory.CreateDirectory(jazzHrDir);
+                WriteCsv(
+                    Path.Combine(jazzHrDir, "jazzhr_link_counts_latest.csv"),
+                    jazzHrRows,
+                    new[] { "source_row", "domain", "apply_url", "status_code", "job_links_found", "sample_job_url", "validated", "error", "elapsed_seconds" });
+                Console.WriteLine($"[URL Refresh] JazzHR valid URLs: {jazzHrRows.Count}");
+            }
 
-            Console.WriteLine($"[URL Refresh] Workday valid URLs: {workdayRows.Count}");
-            Console.WriteLine($"[URL Refresh] iCIMS valid URLs: {icimsRows.Count}");
+            if (runBambooHr)
+            {
+                var bambooHrDir = Path.Combine(outputRoot, "bamboohr_jobs");
+                Directory.CreateDirectory(bambooHrDir);
+                WriteCsv(
+                    Path.Combine(bambooHrDir, "bamboohr_link_counts_latest.csv"),
+                    bambooHrRows,
+                    new[] { "source_row", "domain", "list_url", "pages_fetched", "job_links_found", "sample_job_url", "error", "elapsed_seconds" });
+                Console.WriteLine($"[URL Refresh] BambooHR tenants with jobs: {bambooHrRows.Count}");
+            }
         }
 
         private static async Task<Dictionary<string, string>> DiscoverWorkdayAsync(int sourceRow, string domain, string tenant, string server)
@@ -191,11 +240,124 @@ namespace LinkupFeed
             return null;
         }
 
+        private static async Task<Dictionary<string, string>> DiscoverJazzHrAsync(int sourceRow, string domain)
+        {
+            var started = DateTime.UtcNow;
+            foreach (var path in new[] { "/apply", "/apply/", "/" })
+            {
+                var url = $"https://{domain}{path}";
+                try
+                {
+                    using var response = await _http.GetAsync(url);
+                    var html = await response.Content.ReadAsStringAsync();
+                    if (!response.IsSuccessStatusCode) continue;
+
+                    var links = ExtractJazzHrJobLinks($"https://{domain}", html);
+                    var isJazzHr = html.Contains("JazzHR", StringComparison.OrdinalIgnoreCase) ||
+                                   html.Contains("resumator", StringComparison.OrdinalIgnoreCase) ||
+                                   html.Contains("applytojob", StringComparison.OrdinalIgnoreCase);
+
+                    if (links.Count == 0 && !isJazzHr) continue;
+
+                    return new Dictionary<string, string>
+                    {
+                        ["source_row"] = sourceRow.ToString(),
+                        ["domain"] = domain,
+                        ["apply_url"] = url,
+                        ["status_code"] = ((int)response.StatusCode).ToString(),
+                        ["job_links_found"] = links.Count.ToString(),
+                        ["sample_job_url"] = links.FirstOrDefault() ?? "",
+                        ["validated"] = (isJazzHr || links.Count > 0).ToString(),
+                        ["error"] = "",
+                        ["elapsed_seconds"] = (DateTime.UtcNow - started).TotalSeconds.ToString("0.00")
+                    };
+                }
+                catch
+                {
+                    continue;
+                }
+            }
+
+            return null;
+        }
+
+        private static async Task<Dictionary<string, string>> DiscoverBambooHrAsync(int sourceRow, string domain)
+        {
+            var started = DateTime.UtcNow;
+            var listUrl = $"https://{domain}/careers/list";
+
+            try
+            {
+                using var response = await _http.GetAsync(listUrl);
+                var text = await response.Content.ReadAsStringAsync();
+                if (!response.IsSuccessStatusCode)
+                {
+                    return null;
+                }
+
+                using var doc = JsonDocument.Parse(text);
+                var root = doc.RootElement;
+                if (!root.TryGetProperty("result", out var result) || result.ValueKind != JsonValueKind.Array)
+                {
+                    return null;
+                }
+
+                var totalJobs = 0;
+                if (root.TryGetProperty("meta", out var meta) &&
+                    meta.TryGetProperty("totalCount", out var totalEl) &&
+                    totalEl.TryGetInt32(out var parsedTotal))
+                {
+                    totalJobs = parsedTotal;
+                }
+                else
+                {
+                    totalJobs = result.GetArrayLength();
+                }
+
+                if (totalJobs <= 0) return null;
+
+                var sampleJobId = "";
+                if (result.GetArrayLength() > 0)
+                {
+                    var sample = result[0];
+                    sampleJobId = sample.TryGetProperty("id", out var idEl) ? idEl.ToString() : "";
+                }
+
+                return new Dictionary<string, string>
+                {
+                    ["source_row"] = sourceRow.ToString(),
+                    ["domain"] = domain,
+                    ["list_url"] = listUrl,
+                    ["pages_fetched"] = "1",
+                    ["job_links_found"] = totalJobs.ToString(),
+                    ["sample_job_url"] = string.IsNullOrWhiteSpace(sampleJobId) ? "" : $"https://{domain}/careers/{sampleJobId}",
+                    ["error"] = "",
+                    ["elapsed_seconds"] = (DateTime.UtcNow - started).TotalSeconds.ToString("0.00")
+                };
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
         private static List<string> ExtractJobLinks(string baseUrl, string html)
         {
             var links = new List<string>();
             var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             foreach (Match match in JobLinkPattern.Matches(html ?? ""))
+            {
+                var url = new Uri(new Uri(baseUrl), WebUtility.HtmlDecode(match.Groups["href"].Value)).ToString().Split('#')[0];
+                if (seen.Add(url)) links.Add(url);
+            }
+            return links;
+        }
+
+        private static List<string> ExtractJazzHrJobLinks(string baseUrl, string html)
+        {
+            var links = new List<string>();
+            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (Match match in JazzHrJobLinkPattern.Matches(html ?? ""))
             {
                 var url = new Uri(new Uri(baseUrl), WebUtility.HtmlDecode(match.Groups["href"].Value)).ToString().Split('#')[0];
                 if (seen.Add(url)) links.Add(url);
@@ -220,6 +382,12 @@ namespace LinkupFeed
             value = Regex.Replace(value, "^https?://", "");
             value = value.Split('/')[0].Trim().Trim('.');
             return value.StartsWith("www.") ? value.Substring(4) : value;
+        }
+
+        private static bool ShouldRefreshSource(string onlySource, params string[] names)
+        {
+            if (string.IsNullOrWhiteSpace(onlySource)) return true;
+            return names.Any(name => string.Equals(onlySource, name, StringComparison.OrdinalIgnoreCase));
         }
 
         private static void WriteCsv(string path, List<Dictionary<string, string>> rows, string[] fields)

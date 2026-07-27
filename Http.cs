@@ -32,5 +32,7 @@ namespace LinkupFeed
         public DateTime? DatePosted { get; set; }
         public string ExternalId { get; set; }   // source's own ID (for dedup)
         public int SourceId { get; set; }
+        public bool IsIT { get; set; }
+        public int ITScore { get; set; }
     }
 }
