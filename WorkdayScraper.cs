@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Net;
 using System.Net.Http;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
@@ -107,6 +108,7 @@ namespace LinkupFeed
                             job.Description = detail.Description;
                             job.JobType = FirstNonEmpty(job.JobType, detail.JobType);
                             job.DatePosted = job.DatePosted ?? detail.DatePosted;
+                            job.ExternalId = PreferredWorkdayReferenceId(job.ExternalId, detail.ReferenceId);
 
                             jobs.Add(job);
                         }
@@ -143,7 +145,7 @@ namespace LinkupFeed
             return new ScrapedJob
             {
                 SourceId = SourceId,
-                ExternalId = WorkdayReferenceId(job, externalPath, category),
+                ExternalId = WorkdayReferenceId(row, job, externalPath, category),
                 Title = title,
                 Company = CompanyName(row),
                 Location = string.IsNullOrWhiteSpace(location) && remote ? "Remote" : location,
@@ -175,6 +177,10 @@ namespace LinkupFeed
 
                 if (root.TryGetProperty("jobPostingInfo", out var info))
                 {
+                    detail.ReferenceId = FirstNonEmpty(
+                        GetText(info, "jobReqId"),
+                        GetText(info, "id"));
+
                     var description = GetText(info, "jobDescription");
                     if (!string.IsNullOrWhiteSpace(description))
                     {
@@ -201,6 +207,10 @@ namespace LinkupFeed
                     GetTextOrDescriptor(root, "timeType"),
                     GetTextOrDescriptor(root, "employmentType"),
                     GetTextOrDescriptor(root, "workerSubType"));
+                detail.ReferenceId = FirstNonEmpty(
+                    detail.ReferenceId,
+                    GetText(root, "jobReqId"),
+                    GetText(root, "id"));
                 detail.DatePosted = detail.DatePosted ?? ParseDate(FirstNonEmpty(
                     GetText(root, "startDate"),
                     GetText(root, "postedOn")));
@@ -278,14 +288,46 @@ namespace LinkupFeed
             return text.Contains("remote") || text.Contains("work from home") || text.Contains("virtual");
         }
 
-        private static string WorkdayReferenceId(JsonElement job, string externalPath, string category)
+        private static string WorkdayReferenceId(Dictionary<string, string> row, JsonElement job, string externalPath, string category)
         {
             foreach (var candidate in new[] { GetText(job, "jobReqId"), category, ReferenceIdFromPath(externalPath), ReferenceIdFromText(category) })
             {
                 if (LooksLikeReferenceId(candidate)) return candidate.Trim();
             }
 
-            return externalPath;
+            return GeneratedWorkdayReferenceId(row, job, externalPath);
+        }
+
+        private static string PreferredWorkdayReferenceId(string currentReferenceId, string detailReferenceId)
+        {
+            if (LooksLikeReferenceId(detailReferenceId) &&
+                (string.IsNullOrWhiteSpace(currentReferenceId) || IsGeneratedWorkdayReferenceId(currentReferenceId)))
+            {
+                return detailReferenceId.Trim();
+            }
+
+            return currentReferenceId;
+        }
+
+        private static bool IsGeneratedWorkdayReferenceId(string value)
+        {
+            return !string.IsNullOrWhiteSpace(value) &&
+                   value.Trim().StartsWith("workday:h", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static string GeneratedWorkdayReferenceId(Dictionary<string, string> row, JsonElement job, string externalPath)
+        {
+            var key = string.Join("|", new[]
+            {
+                AtsCsv.Get(row, "domain"),
+                AtsCsv.Get(row, "tenant"),
+                AtsCsv.Get(row, "site"),
+                externalPath,
+                GetText(job, "title")
+            }).ToLowerInvariant();
+
+            var bytes = SHA256.HashData(Encoding.UTF8.GetBytes(key));
+            return $"workday:h{Convert.ToHexString(bytes, 0, 8).ToLowerInvariant()}";
         }
 
         private static bool LooksLikeReferenceId(string value)
@@ -390,6 +432,7 @@ namespace LinkupFeed
 
         private sealed class WorkdayDetailSnapshot
         {
+            public string ReferenceId { get; set; } = "";
             public string Description { get; set; } = "";
             public string JobType { get; set; } = "";
             public DateTime? DatePosted { get; set; }

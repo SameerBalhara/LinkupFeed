@@ -3,6 +3,8 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Net;
 using System.Net.Http;
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Threading;
@@ -210,7 +212,7 @@ namespace LinkupFeed
                 return new ScrapedJob
                 {
                     SourceId = SourceId,
-                    ExternalId = $"bamboohr:{domain.ToLowerInvariant()}:{summary.Id}",
+                    ExternalId = TenantScopedReferenceId(domain, summary.Id),
                     Title = title,
                     Company = CompanyFromDomain(domain),
                     Location = string.IsNullOrWhiteSpace(location) && remote ? "Remote" : location,
@@ -228,7 +230,23 @@ namespace LinkupFeed
             }
         }
 
-        private static string LocationFromElement(JsonElement item)
+
+        private static string TenantScopedReferenceId(string domain, string id)
+        {
+            var tenant = NormalizeReferenceTenant(domain);
+            var raw = string.IsNullOrWhiteSpace(id) ? "" : id.Trim();
+            var fingerprint = $"bamboohr|{tenant}|{raw}".ToLowerInvariant();
+            var hash = SHA256.HashData(Encoding.UTF8.GetBytes(fingerprint));
+            return $"{SourceId}:h{Convert.ToHexString(hash, 0, 8).ToLowerInvariant()}";
+        }
+
+        private static string NormalizeReferenceTenant(string domain)
+        {
+            var value = (domain ?? "").Trim().ToLowerInvariant();
+            if (Uri.TryCreate(value, UriKind.Absolute, out var uri)) value = uri.Host;
+            value = value.Split('/')[0].Trim();
+            return value.StartsWith("www.") ? value.Substring(4) : value;
+        }        private static string LocationFromElement(JsonElement item)
         {
             if (!item.TryGetProperty("location", out var location) || location.ValueKind != JsonValueKind.Object) return "";
 

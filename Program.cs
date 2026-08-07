@@ -61,6 +61,62 @@ namespace LinkupFeed
             }
 
             if (args != null && args.Length > 0 &&
+                (string.Equals(args[0], "backfill-location-parts", StringComparison.OrdinalIgnoreCase) ||
+                 string.Equals(args[0], "backfill-location", StringComparison.OrdinalIgnoreCase)))
+            {
+                var connectionString = Environment.GetEnvironmentVariable(JobDatabaseSync.ConnectionStringEnvVar);
+                if (string.IsNullOrWhiteSpace(connectionString))
+                {
+                    throw new InvalidOperationException($"Set {JobDatabaseSync.ConnectionStringEnvVar} before backfilling location parts.");
+                }
+
+                JobDatabaseSync.BackfillLocationParts(connectionString, "[Location-Backfill]");
+                return;
+            }
+
+            if (args != null && args.Length > 0 &&
+                (string.Equals(args[0], "backfill-location-variants", StringComparison.OrdinalIgnoreCase) ||
+                 string.Equals(args[0], "backfill-location-splits", StringComparison.OrdinalIgnoreCase)))
+            {
+                var connectionString = Environment.GetEnvironmentVariable(JobDatabaseSync.ConnectionStringEnvVar);
+                if (string.IsNullOrWhiteSpace(connectionString))
+                {
+                    throw new InvalidOperationException($"Set {JobDatabaseSync.ConnectionStringEnvVar} before backfilling location variants.");
+                }
+
+                JobDatabaseSync.BackfillMultiLocationVariants(connectionString, "[Location-Variant-Backfill]");
+                return;
+            }
+
+            if (args != null && args.Length > 0 &&
+                (string.Equals(args[0], "cleanup-city-production-blockers", StringComparison.OrdinalIgnoreCase) ||
+                 string.Equals(args[0], "cleanup-city", StringComparison.OrdinalIgnoreCase)))
+            {
+                var connectionString = Environment.GetEnvironmentVariable(JobDatabaseSync.ConnectionStringEnvVar);
+                if (string.IsNullOrWhiteSpace(connectionString))
+                {
+                    throw new InvalidOperationException($"Set {JobDatabaseSync.ConnectionStringEnvVar} before cleaning city production blockers.");
+                }
+
+                JobDatabaseSync.CleanupCityProductionBlockers(connectionString, "[City-Cleanup]");
+                return;
+            }
+
+            if (args != null && args.Length > 0 &&
+                (string.Equals(args[0], "backfill-categories", StringComparison.OrdinalIgnoreCase) ||
+                 string.Equals(args[0], "backfill-category", StringComparison.OrdinalIgnoreCase)))
+            {
+                var connectionString = Environment.GetEnvironmentVariable(JobDatabaseSync.ConnectionStringEnvVar);
+                if (string.IsNullOrWhiteSpace(connectionString))
+                {
+                    throw new InvalidOperationException($"Set {JobDatabaseSync.ConnectionStringEnvVar} before backfilling categories.");
+                }
+
+                JobDatabaseSync.BackfillNormalizedCategories(connectionString, "[Category-Backfill]");
+                return;
+            }
+
+            if (args != null && args.Length > 0 &&
                 string.Equals(args[0], "taleo", StringComparison.OrdinalIgnoreCase))
             {
                 await RunTaleoOnlyAsync();
@@ -140,6 +196,124 @@ namespace LinkupFeed
             }
 
             if (args != null && args.Length > 0 &&
+                (string.Equals(args[0], "breezyhr", StringComparison.OrdinalIgnoreCase) ||
+                 string.Equals(args[0], "breezy", StringComparison.OrdinalIgnoreCase)))
+            {
+                await RunBreezyHrOnlyAsync(
+                    HasArg(args, "--write-db") && !HasArg(args, "--dry-run") && !HasArg(args, "--no-write-db"),
+                    GetIntArg(args, "--limit") ?? GetIntArg(args, "--max-inserts"),
+                    GetStringArg(args, "--url-csv"),
+                    GetIntArg(args, "--limit-sites"),
+                    GetIntArg(args, "--max-jobs-per-site") ?? GetIntArg(args, "--limit-jobs-per-site"));
+                return;
+            }
+
+            if (args != null && args.Length > 0 &&
+                (string.Equals(args[0], "oraclecloud", StringComparison.OrdinalIgnoreCase) ||
+                 string.Equals(args[0], "oracle", StringComparison.OrdinalIgnoreCase)))
+            {
+                await RunOracleCloudOnlyAsync(
+                    HasArg(args, "--write-db") && !HasArg(args, "--dry-run") && !HasArg(args, "--no-write-db"),
+                    GetIntArg(args, "--limit") ?? GetIntArg(args, "--max-inserts"),
+                    GetStringArg(args, "--url-csv"),
+                    GetIntArg(args, "--limit-sites"),
+                    GetIntArg(args, "--max-jobs-per-site") ?? GetIntArg(args, "--limit-jobs-per-site"));
+                return;
+            }
+
+            if (args != null && args.Length > 0 &&
+                (string.Equals(args[0], "pinpointhq", StringComparison.OrdinalIgnoreCase) ||
+                 string.Equals(args[0], "pinpoint", StringComparison.OrdinalIgnoreCase)))
+            {
+                await RunPinpointHqOnlyAsync(
+                    HasArg(args, "--write-db") && !HasArg(args, "--dry-run") && !HasArg(args, "--no-write-db"),
+                    GetIntArg(args, "--limit") ?? GetIntArg(args, "--max-inserts"),
+                    GetStringArg(args, "--url-csv"),
+                    GetIntArg(args, "--limit-sites"),
+                    GetIntArg(args, "--max-jobs-per-site") ?? GetIntArg(args, "--limit-jobs-per-site"));
+                return;
+            }
+
+            if (args != null && args.Length > 0 &&
+                string.Equals(args[0], "personio", StringComparison.OrdinalIgnoreCase))
+            {
+                await RunPersonioOnlyAsync(
+                    HasArg(args, "--write-db") && !HasArg(args, "--dry-run") && !HasArg(args, "--no-write-db"),
+                    GetIntArg(args, "--limit") ?? GetIntArg(args, "--max-inserts"),
+                    GetStringArg(args, "--url-csv"),
+                    GetIntArg(args, "--limit-sites"),
+                    GetIntArg(args, "--max-jobs-per-site") ?? GetIntArg(args, "--limit-jobs-per-site"));
+                return;
+            }
+
+            if (args != null && args.Length > 0 &&
+                (string.Equals(args[0], "freshteam", StringComparison.OrdinalIgnoreCase) ||
+                 string.Equals(args[0], "fresh-team", StringComparison.OrdinalIgnoreCase)))
+            {
+                await RunFreshteamOnlyAsync(
+                    HasArg(args, "--write-db") && !HasArg(args, "--dry-run") && !HasArg(args, "--no-write-db"),
+                    GetIntArg(args, "--limit") ?? GetIntArg(args, "--max-inserts"),
+                    GetStringArg(args, "--url-csv"),
+                    GetIntArg(args, "--limit-sites"),
+                    GetIntArg(args, "--max-jobs-per-site") ?? GetIntArg(args, "--limit-jobs-per-site"));
+                return;
+            }
+
+            if (args != null && args.Length > 0 &&
+                (string.Equals(args[0], "jobsoid", StringComparison.OrdinalIgnoreCase) ||
+                 string.Equals(args[0], "job-soid", StringComparison.OrdinalIgnoreCase)))
+            {
+                await RunJobsoidOnlyAsync(
+                    HasArg(args, "--write-db") && !HasArg(args, "--dry-run") && !HasArg(args, "--no-write-db"),
+                    GetIntArg(args, "--limit") ?? GetIntArg(args, "--max-inserts"),
+                    GetStringArg(args, "--url-csv"),
+                    GetIntArg(args, "--limit-sites"),
+                    GetIntArg(args, "--max-jobs-per-site") ?? GetIntArg(args, "--limit-jobs-per-site"));
+                return;
+            }
+
+            if (args != null && args.Length > 0 &&
+                (string.Equals(args[0], "applicantpro", StringComparison.OrdinalIgnoreCase) ||
+                 string.Equals(args[0], "applicant-pro", StringComparison.OrdinalIgnoreCase)))
+            {
+                await RunApplicantProOnlyAsync(
+                    HasArg(args, "--write-db") && !HasArg(args, "--dry-run") && !HasArg(args, "--no-write-db"),
+                    GetIntArg(args, "--limit") ?? GetIntArg(args, "--max-inserts"),
+                    GetStringArg(args, "--url-csv"),
+                    GetIntArg(args, "--limit-sites"),
+                    GetIntArg(args, "--max-jobs-per-site") ?? GetIntArg(args, "--limit-jobs-per-site"));
+                return;
+            }
+
+            if (args != null && args.Length > 0 &&
+                (string.Equals(args[0], "catsone", StringComparison.OrdinalIgnoreCase) ||
+                 string.Equals(args[0], "cats-one", StringComparison.OrdinalIgnoreCase) ||
+                 string.Equals(args[0], "cats", StringComparison.OrdinalIgnoreCase)))
+            {
+                await RunCatsOneOnlyAsync(
+                    HasArg(args, "--write-db") && !HasArg(args, "--dry-run") && !HasArg(args, "--no-write-db"),
+                    GetIntArg(args, "--limit") ?? GetIntArg(args, "--max-inserts"),
+                    GetStringArg(args, "--url-csv"),
+                    GetIntArg(args, "--limit-sites"),
+                    GetIntArg(args, "--max-jobs-per-site") ?? GetIntArg(args, "--limit-jobs-per-site"));
+                return;
+            }
+
+            if (args != null && args.Length > 0 &&
+                (string.Equals(args[0], "zohorecruit", StringComparison.OrdinalIgnoreCase) ||
+                 string.Equals(args[0], "zoho-recruit", StringComparison.OrdinalIgnoreCase) ||
+                 string.Equals(args[0], "zoho", StringComparison.OrdinalIgnoreCase)))
+            {
+                await RunZohoRecruitOnlyAsync(
+                    HasArg(args, "--write-db") && !HasArg(args, "--dry-run") && !HasArg(args, "--no-write-db"),
+                    GetIntArg(args, "--limit") ?? GetIntArg(args, "--max-inserts"),
+                    GetStringArg(args, "--url-csv"),
+                    GetIntArg(args, "--limit-sites"),
+                    GetIntArg(args, "--max-jobs-per-site") ?? GetIntArg(args, "--limit-jobs-per-site"));
+                return;
+            }
+
+            if (args != null && args.Length > 0 &&
                 string.Equals(args[0], "smartrecruiters", StringComparison.OrdinalIgnoreCase))
             {
                 await RunSmartRecruitersOnlyAsync(
@@ -177,10 +351,20 @@ namespace LinkupFeed
                     GetIntArg(args, "--limit") ?? GetIntArg(args, "--max-inserts"),
                     GetStringArg(args, "--only") ?? GetStringArg(args, "--source"),
                     GetIntArg(args, "--limit-sites"),
+                    GetIntArg(args, "--max-jobs-per-site") ?? GetIntArg(args, "--limit-jobs-per-site"),
                     GetStringArg(args, "--workday-url-csv"),
                     GetStringArg(args, "--icims-url-csv"),
                     GetStringArg(args, "--jazzhr-url-csv"),
-                    GetStringArg(args, "--bamboohr-url-csv"));
+                    GetStringArg(args, "--bamboohr-url-csv"),
+                    GetStringArg(args, "--breezyhr-url-csv"),
+                    GetStringArg(args, "--oraclecloud-url-csv"),
+                    GetStringArg(args, "--pinpointhq-url-csv") ?? GetStringArg(args, "--pinpoint-url-csv"),
+                    GetStringArg(args, "--personio-url-csv"),
+                    GetStringArg(args, "--freshteam-url-csv") ?? GetStringArg(args, "--fresh-team-url-csv"),
+                    GetStringArg(args, "--jobsoid-url-csv") ?? GetStringArg(args, "--job-soid-url-csv"),
+                    GetStringArg(args, "--applicantpro-url-csv") ?? GetStringArg(args, "--applicant-pro-url-csv"),
+                    GetStringArg(args, "--catsone-url-csv") ?? GetStringArg(args, "--cats-one-url-csv"),
+                    GetStringArg(args, "--zohorecruit-url-csv") ?? GetStringArg(args, "--zoho-recruit-url-csv") ?? GetStringArg(args, "--zoho-url-csv"));
                 return;
             }
 
@@ -340,7 +524,7 @@ namespace LinkupFeed
 
         }
 
-        private static async System.Threading.Tasks.Task RunAllScrapersWithDedupeAsync(bool writeToDatabase, int? insertLimit, string onlySource, int? limitSites, string workdayUrlCsv, string icimsUrlCsv, string jazzHrUrlCsv, string bambooHrUrlCsv)
+        private static async System.Threading.Tasks.Task RunAllScrapersWithDedupeAsync(bool writeToDatabase, int? insertLimit, string onlySource, int? limitSites, int? maxJobsPerSite, string workdayUrlCsv, string icimsUrlCsv, string jazzHrUrlCsv, string bambooHrUrlCsv, string breezyHrUrlCsv, string oracleCloudUrlCsv, string pinpointHqUrlCsv, string personioUrlCsv, string freshteamUrlCsv, string jobsoidUrlCsv, string applicantProUrlCsv, string catsOneUrlCsv, string zohoRecruitUrlCsv)
         {
             var connectionString = Environment.GetEnvironmentVariable(JobDatabaseSync.ConnectionStringEnvVar);
             if (string.IsNullOrWhiteSpace(connectionString))
@@ -388,7 +572,7 @@ namespace LinkupFeed
                 await AddFilteredJobsAsync(
                     allJobs,
                     "JazzHR",
-                    () => new JazzHrScraper().FetchJobsAsync(jazzHrUrlCsv, limitSites),
+                    () => new JazzHrScraper().FetchJobsAsync(jazzHrUrlCsv, limitSites, maxJobsPerSite ?? 0),
                     includeRemoteWithoutUsLocation: true);
             }
 
@@ -397,7 +581,88 @@ namespace LinkupFeed
                 await AddFilteredJobsAsync(
                     allJobs,
                     "BambooHR",
-                    () => new BambooHrScraper().FetchJobsAsync(bambooHrUrlCsv, limitSites),
+                    () => new BambooHrScraper().FetchJobsAsync(bambooHrUrlCsv, limitSites, maxJobsPerSite ?? 0),
+                    includeRemoteWithoutUsLocation: true);
+            }
+
+            if (ShouldRunSource(onlySource, "BreezyHR", "breezy"))
+            {
+                await AddFilteredJobsAsync(
+                    allJobs,
+                    "BreezyHR",
+                    () => new BreezyHrScraper().FetchJobsAsync(breezyHrUrlCsv, limitSites, maxJobsPerSite ?? 0),
+                    includeRemoteWithoutUsLocation: true);
+            }
+
+            if (ShouldRunSource(onlySource, "OracleCloud", "oracle", "oraclecloud"))
+            {
+                await AddFilteredJobsAsync(
+                    allJobs,
+                    "OracleCloud",
+                    () => new OracleCloudScraper().FetchJobsAsync(oracleCloudUrlCsv, limitSites, maxJobsPerSite ?? 0),
+                    includeRemoteWithoutUsLocation: true);
+            }
+
+            if (ShouldRunSource(onlySource, "PinpointHQ", "pinpoint", "pinpointhq"))
+            {
+                await AddFilteredJobsAsync(
+                    allJobs,
+                    "PinpointHQ",
+                    () => new PinpointHqScraper().FetchJobsAsync(pinpointHqUrlCsv, limitSites, maxJobsPerSite ?? 0),
+                    includeRemoteWithoutUsLocation: true);
+            }
+
+            if (ShouldRunSource(onlySource, "Personio"))
+            {
+                await AddFilteredJobsAsync(
+                    allJobs,
+                    "Personio",
+                    () => new PersonioScraper().FetchJobsAsync(personioUrlCsv, limitSites, maxJobsPerSite ?? 0),
+                    includeRemoteWithoutUsLocation: true);
+            }
+
+            if (ShouldRunSource(onlySource, "Freshteam", "fresh-team"))
+            {
+                await AddFilteredJobsAsync(
+                    allJobs,
+                    "Freshteam",
+                    () => new FreshteamScraper().FetchJobsAsync(freshteamUrlCsv, limitSites, maxJobsPerSite ?? 0),
+                    includeRemoteWithoutUsLocation: true);
+            }
+
+            if (ShouldRunSource(onlySource, "Jobsoid", "job-soid"))
+            {
+                await AddFilteredJobsAsync(
+                    allJobs,
+                    "Jobsoid",
+                    () => new JobsoidScraper().FetchJobsAsync(jobsoidUrlCsv, limitSites, maxJobsPerSite ?? 0),
+                    includeRemoteWithoutUsLocation: true);
+            }
+
+            if (ShouldRunSource(onlySource, "ApplicantPro", "applicant-pro"))
+            {
+                await AddFilteredJobsAsync(
+                    allJobs,
+                    "ApplicantPro",
+                    () => new ApplicantProScraper().FetchJobsAsync(applicantProUrlCsv, limitSites, maxJobsPerSite ?? 0),
+                    includeRemoteWithoutUsLocation: true);
+            }
+
+            if (ShouldRunSource(onlySource, "CATSOne", "catsone", "cats-one", "cats"))
+            {
+                await AddFilteredJobsAsync(
+                    allJobs,
+                    "CATSOne",
+                    () => new CatsOneScraper().FetchJobsAsync(catsOneUrlCsv, limitSites, maxJobsPerSite ?? 0),
+                    includeRemoteWithoutUsLocation: true);
+            }
+
+            if (ShouldRunSource(onlySource, "ZohoRecruit", "zoho", "zohorecruit", "zoho-recruit"))
+            {
+                await AddFilteredJobsAsync(
+                    allJobs,
+                    "ZohoRecruit",
+                    () => new ZohoRecruitScraper().FetchJobsAsync(zohoRecruitUrlCsv, limitSites, maxJobsPerSite ?? 0),
                     includeRemoteWithoutUsLocation: true);
             }
 
@@ -524,6 +789,7 @@ namespace LinkupFeed
                     .ToList();
                 Console.WriteLine($"[{label}] US/remote filter: {locationBefore} -> {jobs.Count}");
 
+                jobs = ExpandLocationsForDatabase(jobs, label);
                 jobs = ClassifyJobsForFlagging(jobs, label);
                 PrintJobTypeSummary(label, jobs);
 
@@ -533,6 +799,19 @@ namespace LinkupFeed
             {
                 Console.WriteLine($"[{label}] FAILED: {ex.Message}");
             }
+        }
+
+        private static List<ScrapedJob> ExpandLocationsForDatabase(List<ScrapedJob> jobs, string label)
+        {
+            var before = jobs.Count;
+            var expanded = JobLocationExpander.ExpandForDatabase(jobs, out var expandedPostings, out var addedRows);
+            if (expandedPostings > 0 || expanded.Count != before)
+            {
+                Console.WriteLine(
+                    $"[{label}] Location expansion: {before} -> {expanded.Count} rows; expanded postings={expandedPostings}, added city rows={addedRows}");
+            }
+
+            return expanded;
         }
 
         private static List<ScrapedJob> ClassifyJobsForFlagging(List<ScrapedJob> jobs, string label)
@@ -755,6 +1034,7 @@ namespace LinkupFeed
             jobs = jobs.Where(j => UsLocationFilter.IsUs(j.Location) || j.IsRemote == true).ToList();
             Console.WriteLine($"[Ashby-Only] US filter: {before} -> {jobs.Count}");
 
+            jobs = ExpandLocationsForDatabase(jobs, "Ashby-Only");
             jobs = ClassifyJobsForFlagging(jobs, "Ashby-Only");
 
             foreach (var j in jobs.Take(10))
@@ -848,6 +1128,96 @@ namespace LinkupFeed
                 includeRemoteWithoutUsLocation: true);
         }
 
+        private static async System.Threading.Tasks.Task RunBreezyHrOnlyAsync(bool writeToDatabase, int? insertLimit, string inputCsv, int? limitSites, int? maxJobsPerSite)
+        {
+            await RunSingleScraperWithDedupeAsync(
+                "BreezyHR-Only",
+                () => new BreezyHrScraper().FetchJobsAsync(inputCsv, limitSites, maxJobsPerSite ?? 0),
+                writeToDatabase,
+                insertLimit,
+                includeRemoteWithoutUsLocation: true);
+        }
+
+        private static async System.Threading.Tasks.Task RunOracleCloudOnlyAsync(bool writeToDatabase, int? insertLimit, string inputCsv, int? limitSites, int? maxJobsPerSite)
+        {
+            await RunSingleScraperWithDedupeAsync(
+                "OracleCloud-Only",
+                () => new OracleCloudScraper().FetchJobsAsync(inputCsv, limitSites, maxJobsPerSite ?? 0),
+                writeToDatabase,
+                insertLimit,
+                includeRemoteWithoutUsLocation: true);
+        }
+
+        private static async System.Threading.Tasks.Task RunPinpointHqOnlyAsync(bool writeToDatabase, int? insertLimit, string inputCsv, int? limitSites, int? maxJobsPerSite)
+        {
+            await RunSingleScraperWithDedupeAsync(
+                "PinpointHQ-Only",
+                () => new PinpointHqScraper().FetchJobsAsync(inputCsv, limitSites, maxJobsPerSite ?? 0),
+                writeToDatabase,
+                insertLimit,
+                includeRemoteWithoutUsLocation: true);
+        }
+
+        private static async System.Threading.Tasks.Task RunPersonioOnlyAsync(bool writeToDatabase, int? insertLimit, string inputCsv, int? limitSites, int? maxJobsPerSite)
+        {
+            await RunSingleScraperWithDedupeAsync(
+                "Personio-Only",
+                () => new PersonioScraper().FetchJobsAsync(inputCsv, limitSites, maxJobsPerSite ?? 0),
+                writeToDatabase,
+                insertLimit,
+                includeRemoteWithoutUsLocation: true);
+        }
+
+        private static async System.Threading.Tasks.Task RunFreshteamOnlyAsync(bool writeToDatabase, int? insertLimit, string inputCsv, int? limitSites, int? maxJobsPerSite)
+        {
+            await RunSingleScraperWithDedupeAsync(
+                "Freshteam-Only",
+                () => new FreshteamScraper().FetchJobsAsync(inputCsv, limitSites, maxJobsPerSite ?? 0),
+                writeToDatabase,
+                insertLimit,
+                includeRemoteWithoutUsLocation: true);
+        }
+
+        private static async System.Threading.Tasks.Task RunJobsoidOnlyAsync(bool writeToDatabase, int? insertLimit, string inputCsv, int? limitSites, int? maxJobsPerSite)
+        {
+            await RunSingleScraperWithDedupeAsync(
+                "Jobsoid-Only",
+                () => new JobsoidScraper().FetchJobsAsync(inputCsv, limitSites, maxJobsPerSite ?? 0),
+                writeToDatabase,
+                insertLimit,
+                includeRemoteWithoutUsLocation: true);
+        }
+
+        private static async System.Threading.Tasks.Task RunApplicantProOnlyAsync(bool writeToDatabase, int? insertLimit, string inputCsv, int? limitSites, int? maxJobsPerSite)
+        {
+            await RunSingleScraperWithDedupeAsync(
+                "ApplicantPro-Only",
+                () => new ApplicantProScraper().FetchJobsAsync(inputCsv, limitSites, maxJobsPerSite ?? 0),
+                writeToDatabase,
+                insertLimit,
+                includeRemoteWithoutUsLocation: true);
+        }
+
+        private static async System.Threading.Tasks.Task RunCatsOneOnlyAsync(bool writeToDatabase, int? insertLimit, string inputCsv, int? limitSites, int? maxJobsPerSite)
+        {
+            await RunSingleScraperWithDedupeAsync(
+                "CATSOne-Only",
+                () => new CatsOneScraper().FetchJobsAsync(inputCsv, limitSites, maxJobsPerSite ?? 0),
+                writeToDatabase,
+                insertLimit,
+                includeRemoteWithoutUsLocation: true);
+        }
+
+        private static async System.Threading.Tasks.Task RunZohoRecruitOnlyAsync(bool writeToDatabase, int? insertLimit, string inputCsv, int? limitSites, int? maxJobsPerSite)
+        {
+            await RunSingleScraperWithDedupeAsync(
+                "ZohoRecruit-Only",
+                () => new ZohoRecruitScraper().FetchJobsAsync(inputCsv, limitSites, maxJobsPerSite ?? 0),
+                writeToDatabase,
+                insertLimit,
+                includeRemoteWithoutUsLocation: true);
+        }
+
         private static async System.Threading.Tasks.Task RunSingleScraperWithDedupeAsync(
             string label,
             Func<System.Threading.Tasks.Task<List<ScrapedJob>>> fetch,
@@ -863,6 +1233,7 @@ namespace LinkupFeed
             jobs = jobs.Where(j => UsLocationFilter.IsUs(j.Location) || (includeRemoteWithoutUsLocation && j.IsRemote)).ToList();
             Console.WriteLine($"[{label}] US/remote filter: {before} -> {jobs.Count}");
 
+            jobs = ExpandLocationsForDatabase(jobs, label);
             jobs = ClassifyJobsForFlagging(jobs, label);
             PrintJobTypeSummary(label, jobs);
 
@@ -909,6 +1280,7 @@ namespace LinkupFeed
             jobs = jobs.Where(j => UsLocationFilter.IsUs(j.Location) || j.IsRemote == true).ToList();
             Console.WriteLine($"[SmartRecruiters-Only] US filter: {before} -> {jobs.Count}");
 
+            jobs = ExpandLocationsForDatabase(jobs, "SmartRecruiters-Only");
             jobs = ClassifyJobsForFlagging(jobs, "SmartRecruiters-Only");
 
             foreach (var j in jobs.Take(10))
@@ -961,6 +1333,7 @@ namespace LinkupFeed
             jobs = jobs.Where(j => UsLocationFilter.IsUs(j.Location) || j.IsRemote == true).ToList();
             Console.WriteLine($"[Dayforce-Only] US filter: {before} -> {jobs.Count}");
 
+            jobs = ExpandLocationsForDatabase(jobs, "Dayforce-Only");
             jobs = ClassifyJobsForFlagging(jobs, "Dayforce-Only");
 
             foreach (var j in jobs.Take(10))
@@ -1013,6 +1386,7 @@ namespace LinkupFeed
             jobs = jobs.Where(j => UsLocationFilter.IsUs(j.Location) || j.IsRemote == true).ToList();
             Console.WriteLine($"[Recruitee-Only] US filter: {before} -> {jobs.Count}");
 
+            jobs = ExpandLocationsForDatabase(jobs, "Recruitee-Only");
             jobs = ClassifyJobsForFlagging(jobs, "Recruitee-Only");
 
             foreach (var j in jobs.Take(10))

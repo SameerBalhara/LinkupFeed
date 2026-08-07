@@ -7,7 +7,9 @@ using System.Net.Http;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using System.Threading;
 using System.Threading.Tasks;
+using System.Xml.Linq;
 
 namespace LinkupFeed
 {
@@ -19,6 +21,17 @@ namespace LinkupFeed
         private static readonly Regex JazzHrDomainPattern = new Regex(@"(^|\.)applytojob\.com$|(^|\.)jazzhr\.com$", RegexOptions.IgnoreCase | RegexOptions.Compiled);
         private static readonly Regex JazzHrJobLinkPattern = new Regex("href=[\"'](?<href>[^\"']*/apply/(?<job_id>[A-Za-z0-9]+)(?:/[^\"']*)?)[\"']", RegexOptions.IgnoreCase | RegexOptions.Compiled);
         private static readonly Regex BambooHrDomainPattern = new Regex(@"(^|\.)bamboohr\.com$", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+        private static readonly Regex BreezyHrDomainPattern = new Regex(@"(^|\.)breezy\.hr$", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+        private static readonly Regex OracleCloudDomainPattern = new Regex(@"(^|\.)oraclecloud\.com$", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+        private static readonly Regex PinpointHqDomainPattern = new Regex(@"(^|\.)pinpointhq\.com$", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+        private static readonly Regex PersonioDomainPattern = new Regex(@"(^|\.)jobs\.personio\.(com|de)$", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+        private static readonly Regex FreshteamDomainPattern = new Regex(@"(^|\.)freshteam\.com$", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+        private static readonly Regex JobsoidDomainPattern = new Regex(@"(^|\.)jobsoid\.com$", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+        private static readonly Regex ApplicantProDomainPattern = new Regex(@"(^|\.)applicantpro\.com$", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+        private static readonly Regex CatsOneDomainPattern = new Regex(@"(^|\.)catsone\.com$", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+        private static readonly Regex ZohoRecruitDomainPattern = new Regex(@"(^|\.)zohorecruit\.(com|in)$", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+        private static readonly Regex FreshteamJobLinkPattern = new Regex("href=[\"'](?<href>/jobs/(?<job_id>[^\"'/]+)/[^\"']*)[\"']", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+        private static readonly Regex OracleSiteNumberPattern = new Regex("data-sitenumber=[\"'](?<site>[^\"']+)[\"']", RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
         private static readonly string[] WorkdaySiteCandidates =
         {
@@ -51,6 +64,15 @@ namespace LinkupFeed
             var runIcims = ShouldRefreshSource(onlySource, "iCIMS", "icims");
             var runJazzHr = ShouldRefreshSource(onlySource, "JazzHR", "jazz", "applytojob", "apply-to-job");
             var runBambooHr = ShouldRefreshSource(onlySource, "BambooHR", "bamboo");
+            var runBreezyHr = ShouldRefreshSource(onlySource, "BreezyHR", "breezy");
+            var runOracleCloud = ShouldRefreshSource(onlySource, "OracleCloud", "oracle", "oraclecloud");
+            var runPinpointHq = ShouldRefreshSource(onlySource, "PinpointHQ", "pinpoint", "pinpointhq");
+            var runPersonio = ShouldRefreshSource(onlySource, "Personio");
+            var runFreshteam = ShouldRefreshSource(onlySource, "Freshteam", "fresh-team");
+            var runJobsoid = ShouldRefreshSource(onlySource, "Jobsoid", "job-soid");
+            var runApplicantPro = ShouldRefreshSource(onlySource, "ApplicantPro", "applicant-pro");
+            var runCatsOne = ShouldRefreshSource(onlySource, "CATSOne", "catsone", "cats-one");
+            var runZohoRecruit = ShouldRefreshSource(onlySource, "ZohoRecruit", "zoho", "zohorecruit", "zoho-recruit");
 
             var rows = AtsCsv.ReadRows(inputCsv);
             var domains = rows
@@ -68,11 +90,244 @@ namespace LinkupFeed
             var icimsRows = new List<Dictionary<string, string>>();
             var jazzHrRows = new List<Dictionary<string, string>>();
             var bambooHrRows = new List<Dictionary<string, string>>();
+            var breezyHrRows = new List<Dictionary<string, string>>();
+            var oracleCloudRows = new List<Dictionary<string, string>>();
+            var pinpointHqRows = new List<Dictionary<string, string>>();
+            var personioRows = new List<Dictionary<string, string>>();
+            var freshteamRows = new List<Dictionary<string, string>>();
+            var jobsoidRows = new List<Dictionary<string, string>>();
+            var applicantProRows = new List<Dictionary<string, string>>();
+            var catsOneRows = new List<Dictionary<string, string>>();
+            var zohoRecruitRows = new List<Dictionary<string, string>>();
+
+            if (runOracleCloud)
+            {
+                var oracleInputs = domains
+                    .Select((domain, index) => new { Domain = domain, SourceRow = index + 2 })
+                    .Where(x => OracleCloudDomainPattern.IsMatch(x.Domain))
+                    .ToList();
+
+                Console.WriteLine($"[URL Refresh] Oracle Cloud candidate domains: {oracleInputs.Count}");
+                using var oracleGate = new SemaphoreSlim(16);
+                var oracleTasks = oracleInputs.Select(async input =>
+                {
+                    await oracleGate.WaitAsync();
+                    try { return await DiscoverOracleCloudAsync(input.SourceRow, input.Domain); }
+                    finally { oracleGate.Release(); }
+                }).ToList();
+
+                foreach (var task in oracleTasks)
+                {
+                    var result = await task;
+                    if (result != null) oracleCloudRows.Add(result);
+                }
+            }
+
+            if (runPinpointHq)
+            {
+                var pinpointInputs = domains
+                    .Select((domain, index) => new { Domain = domain, SourceRow = index + 2 })
+                    .Where(x => PinpointHqDomainPattern.IsMatch(x.Domain))
+                    .ToList();
+
+                Console.WriteLine($"[URL Refresh] PinpointHQ candidate domains: {pinpointInputs.Count}");
+                using var pinpointGate = new SemaphoreSlim(16);
+                var pinpointTasks = pinpointInputs.Select(async input =>
+                {
+                    await pinpointGate.WaitAsync();
+                    try { return await DiscoverPinpointHqAsync(input.SourceRow, input.Domain); }
+                    finally { pinpointGate.Release(); }
+                }).ToList();
+
+                foreach (var task in pinpointTasks)
+                {
+                    var result = await task;
+                    if (result != null) pinpointHqRows.Add(result);
+                }
+            }
+
+            if (runPersonio)
+            {
+                var personioInputs = domains
+                    .Select((domain, index) => new { Domain = domain, SourceRow = index + 2 })
+                    .Where(x => PersonioDomainPattern.IsMatch(x.Domain))
+                    .ToList();
+
+                Console.WriteLine($"[URL Refresh] Personio candidate domains: {personioInputs.Count}");
+                using var personioGate = new SemaphoreSlim(12);
+                var personioTasks = personioInputs.Select(async input =>
+                {
+                    await personioGate.WaitAsync();
+                    try { return await DiscoverPersonioAsync(input.SourceRow, input.Domain); }
+                    finally { personioGate.Release(); }
+                }).ToList();
+
+                foreach (var task in personioTasks)
+                {
+                    var result = await task;
+                    if (result != null) personioRows.Add(result);
+                }
+            }
+
+            if (runFreshteam)
+            {
+                var freshteamInputs = domains
+                    .Select((domain, index) => new { Domain = domain, SourceRow = index + 2 })
+                    .Where(x => FreshteamDomainPattern.IsMatch(x.Domain))
+                    .ToList();
+
+                Console.WriteLine($"[URL Refresh] Freshteam candidate domains: {freshteamInputs.Count}");
+                using var freshteamGate = new SemaphoreSlim(12);
+                var freshteamTasks = freshteamInputs.Select(async input =>
+                {
+                    await freshteamGate.WaitAsync();
+                    try { return await DiscoverFreshteamAsync(input.SourceRow, input.Domain); }
+                    finally { freshteamGate.Release(); }
+                }).ToList();
+
+                foreach (var task in freshteamTasks)
+                {
+                    var result = await task;
+                    if (result != null) freshteamRows.Add(result);
+                }
+            }
+
+            if (runJobsoid)
+            {
+                var jobsoidInputs = domains
+                    .Select((domain, index) => new { Domain = domain, SourceRow = index + 2 })
+                    .Where(x => JobsoidDomainPattern.IsMatch(x.Domain))
+                    .ToList();
+
+                Console.WriteLine($"[URL Refresh] Jobsoid candidate domains: {jobsoidInputs.Count}");
+                using var jobsoidGate = new SemaphoreSlim(12);
+                var jobsoidTasks = jobsoidInputs.Select(async input =>
+                {
+                    await jobsoidGate.WaitAsync();
+                    try { return await DiscoverJobsoidAsync(input.SourceRow, input.Domain); }
+                    finally { jobsoidGate.Release(); }
+                }).ToList();
+
+                foreach (var task in jobsoidTasks)
+                {
+                    var result = await task;
+                    if (result != null) jobsoidRows.Add(result);
+                }
+            }
+
+            if (runApplicantPro)
+            {
+                var applicantProInputs = domains
+                    .Select((domain, index) => new { Domain = domain, SourceRow = index + 2 })
+                    .Where(x => ApplicantProDomainPattern.IsMatch(x.Domain))
+                    .ToList();
+
+                Console.WriteLine($"[URL Refresh] ApplicantPro candidate domains: {applicantProInputs.Count}");
+                using var applicantProGate = new SemaphoreSlim(10);
+                var applicantProTasks = applicantProInputs.Select(async input =>
+                {
+                    await applicantProGate.WaitAsync();
+                    try { return await DiscoverApplicantProAsync(input.SourceRow, input.Domain); }
+                    finally { applicantProGate.Release(); }
+                }).ToList();
+
+                foreach (var task in applicantProTasks)
+                {
+                    var result = await task;
+                    if (result != null) applicantProRows.Add(result);
+                }
+            }
+
+            if (runCatsOne)
+            {
+                var catsOneInputs = domains
+                    .Select((domain, index) => new { Domain = domain, SourceRow = index + 2 })
+                    .Where(x => CatsOneDomainPattern.IsMatch(x.Domain))
+                    .ToList();
+
+                Console.WriteLine($"[URL Refresh] CATS One candidate domains: {catsOneInputs.Count}");
+                using var catsOneGate = new SemaphoreSlim(10);
+                var catsOneTasks = catsOneInputs.Select(async input =>
+                {
+                    await catsOneGate.WaitAsync();
+                    try { return await DiscoverCatsOneAsync(input.SourceRow, input.Domain); }
+                    finally { catsOneGate.Release(); }
+                }).ToList();
+
+                foreach (var task in catsOneTasks)
+                {
+                    var result = await task;
+                    if (result != null) catsOneRows.Add(result);
+                }
+            }
+
+            if (runZohoRecruit)
+            {
+                var zohoRecruitInputs = domains
+                    .Select((domain, index) => new { Domain = domain, SourceRow = index + 2 })
+                    .Where(x => ZohoRecruitDomainPattern.IsMatch(x.Domain))
+                    .ToList();
+
+                Console.WriteLine($"[URL Refresh] Zoho Recruit candidate domains: {zohoRecruitInputs.Count}");
+                using var zohoRecruitGate = new SemaphoreSlim(8);
+                var zohoRecruitTasks = zohoRecruitInputs.Select(async input =>
+                {
+                    await zohoRecruitGate.WaitAsync();
+                    try { return await DiscoverZohoRecruitAsync(input.SourceRow, input.Domain); }
+                    finally { zohoRecruitGate.Release(); }
+                }).ToList();
+
+                foreach (var task in zohoRecruitTasks)
+                {
+                    var result = await task;
+                    if (result != null) zohoRecruitRows.Add(result);
+                }
+            }
 
             int sourceRow = 1;
             foreach (var domain in domains)
             {
                 sourceRow++;
+                if (runOracleCloud && OracleCloudDomainPattern.IsMatch(domain))
+                {
+                    continue;
+                }
+
+                if (runPinpointHq && PinpointHqDomainPattern.IsMatch(domain))
+                {
+                    continue;
+                }
+
+                if (runPersonio && PersonioDomainPattern.IsMatch(domain))
+                {
+                    continue;
+                }
+
+                if (runFreshteam && FreshteamDomainPattern.IsMatch(domain))
+                {
+                    continue;
+                }
+
+                if (runJobsoid && JobsoidDomainPattern.IsMatch(domain))
+                {
+                    continue;
+                }
+
+                if (runApplicantPro && ApplicantProDomainPattern.IsMatch(domain))
+                {
+                    continue;
+                }
+
+                if (runCatsOne && CatsOneDomainPattern.IsMatch(domain))
+                {
+                    continue;
+                }
+
+                if (runZohoRecruit && ZohoRecruitDomainPattern.IsMatch(domain))
+                {
+                    continue;
+                }
+
                 var workdayMatch = WorkdayDomainPattern.Match(domain);
                 if (runWorkday && workdayMatch.Success)
                 {
@@ -101,6 +356,14 @@ namespace LinkupFeed
                     if (result != null) bambooHrRows.Add(result);
                     continue;
                 }
+
+                if (runBreezyHr && BreezyHrDomainPattern.IsMatch(domain))
+                {
+                    var result = await DiscoverBreezyHrAsync(sourceRow, domain);
+                    if (result != null) breezyHrRows.Add(result);
+                    continue;
+                }
+
             }
 
             if (runWorkday)
@@ -145,6 +408,105 @@ namespace LinkupFeed
                     bambooHrRows,
                     new[] { "source_row", "domain", "list_url", "pages_fetched", "job_links_found", "sample_job_url", "error", "elapsed_seconds" });
                 Console.WriteLine($"[URL Refresh] BambooHR tenants with jobs: {bambooHrRows.Count}");
+            }
+
+            if (runBreezyHr)
+            {
+                var breezyHrDir = Path.Combine(outputRoot, "breezyhr_jobs");
+                Directory.CreateDirectory(breezyHrDir);
+                WriteCsv(
+                    Path.Combine(breezyHrDir, "breezyhr_link_counts_latest.csv"),
+                    breezyHrRows,
+                    new[] { "source_row", "domain", "json_url", "status_code", "job_links_found", "sample_job_url", "sample_title", "error", "elapsed_seconds" });
+                Console.WriteLine($"[URL Refresh] BreezyHR tenants with jobs: {breezyHrRows.Count}");
+            }
+
+            if (runOracleCloud)
+            {
+                var oracleDir = Path.Combine(outputRoot, "oraclecloud_jobs");
+                Directory.CreateDirectory(oracleDir);
+                WriteCsv(
+                    Path.Combine(oracleDir, "oraclecloud_requisition_urls_latest.csv"),
+                    oracleCloudRows,
+                    new[] { "source_row", "domain", "site", "api_url", "careers_url", "status_code", "validated", "total_jobs", "sample_job_id", "sample_title", "sample_company", "sample_job_url", "error", "elapsed_seconds" });
+                Console.WriteLine($"[URL Refresh] Oracle Cloud tenants with jobs: {oracleCloudRows.Count}");
+            }
+
+            if (runPinpointHq)
+            {
+                var pinpointDir = Path.Combine(outputRoot, "pinpointhq_jobs");
+                Directory.CreateDirectory(pinpointDir);
+                WriteCsv(
+                    Path.Combine(pinpointDir, "pinpointhq_link_counts_latest.csv"),
+                    pinpointHqRows,
+                    new[] { "source_row", "domain", "rss_url", "careers_url", "status_code", "job_links_found", "sample_job_url", "sample_title", "sample_posted_at", "error", "elapsed_seconds" });
+                Console.WriteLine($"[URL Refresh] PinpointHQ tenants with jobs: {pinpointHqRows.Count}");
+            }
+
+            if (runPersonio)
+            {
+                var personioDir = Path.Combine(outputRoot, "personio_jobs");
+                Directory.CreateDirectory(personioDir);
+                WriteCsv(
+                    Path.Combine(personioDir, "personio_xml_feeds_latest.csv"),
+                    personioRows,
+                    new[] { "source_row", "domain", "xml_url", "careers_url", "status_code", "job_links_found", "sample_job_url", "sample_title", "sample_posted_at", "error", "elapsed_seconds" });
+                Console.WriteLine($"[URL Refresh] Personio tenants with jobs: {personioRows.Count}");
+            }
+
+            if (runFreshteam)
+            {
+                var freshteamDir = Path.Combine(outputRoot, "freshteam_jobs");
+                Directory.CreateDirectory(freshteamDir);
+                WriteCsv(
+                    Path.Combine(freshteamDir, "freshteam_link_counts_latest.csv"),
+                    freshteamRows,
+                    new[] { "source_row", "domain", "list_url", "status_code", "job_links_found", "sample_job_url", "sample_title", "error", "elapsed_seconds" });
+                Console.WriteLine($"[URL Refresh] Freshteam tenants with jobs: {freshteamRows.Count}");
+            }
+
+            if (runJobsoid)
+            {
+                var jobsoidDir = Path.Combine(outputRoot, "jobsoid_jobs");
+                Directory.CreateDirectory(jobsoidDir);
+                WriteCsv(
+                    Path.Combine(jobsoidDir, "jobsoid_api_urls_latest.csv"),
+                    jobsoidRows,
+                    new[] { "source_row", "domain", "api_url", "careers_url", "status_code", "job_links_found", "sample_job_url", "sample_title", "sample_posted_at", "error", "elapsed_seconds" });
+                Console.WriteLine($"[URL Refresh] Jobsoid tenants with jobs: {jobsoidRows.Count}");
+            }
+
+            if (runApplicantPro)
+            {
+                var applicantProDir = Path.Combine(outputRoot, "applicantpro_jobs");
+                Directory.CreateDirectory(applicantProDir);
+                WriteCsv(
+                    Path.Combine(applicantProDir, "applicantpro_api_urls_latest.csv"),
+                    applicantProRows,
+                    new[] { "source_row", "domain", "site_id", "list_url", "careers_url", "status_code", "job_links_found", "sample_job_url", "sample_title", "error", "elapsed_seconds" });
+                Console.WriteLine($"[URL Refresh] ApplicantPro tenants with jobs: {applicantProRows.Count}");
+            }
+
+            if (runCatsOne)
+            {
+                var catsOneDir = Path.Combine(outputRoot, "catsone_jobs");
+                Directory.CreateDirectory(catsOneDir);
+                WriteCsv(
+                    Path.Combine(catsOneDir, "catsone_portals_latest.csv"),
+                    catsOneRows,
+                    new[] { "source_row", "domain", "portal_id", "careers_url", "status_code", "job_links_found", "sample_job_url", "sample_title", "error", "elapsed_seconds" });
+                Console.WriteLine($"[URL Refresh] CATS One tenants with jobs: {catsOneRows.Count}");
+            }
+
+            if (runZohoRecruit)
+            {
+                var zohoRecruitDir = Path.Combine(outputRoot, "zohorecruit_jobs");
+                Directory.CreateDirectory(zohoRecruitDir);
+                WriteCsv(
+                    Path.Combine(zohoRecruitDir, "zohorecruit_public_urls_latest.csv"),
+                    zohoRecruitRows,
+                    new[] { "source_row", "domain", "careers_url", "status_code", "job_links_found", "sample_job_url", "sample_title", "error", "elapsed_seconds" });
+                Console.WriteLine($"[URL Refresh] Zoho Recruit tenants with jobs: {zohoRecruitRows.Count}");
             }
         }
 
@@ -341,6 +703,452 @@ namespace LinkupFeed
             }
         }
 
+        private static async Task<Dictionary<string, string>> DiscoverBreezyHrAsync(int sourceRow, string domain)
+        {
+            var started = DateTime.UtcNow;
+            var jsonUrl = $"https://{domain}/json";
+
+            try
+            {
+                using var response = await _http.GetAsync(jsonUrl);
+                var text = await response.Content.ReadAsStringAsync();
+                if (!response.IsSuccessStatusCode) return null;
+
+                using var doc = JsonDocument.Parse(text);
+                if (doc.RootElement.ValueKind != JsonValueKind.Array) return null;
+
+                var totalJobs = doc.RootElement.GetArrayLength();
+                if (totalJobs <= 0) return null;
+
+                var sample = doc.RootElement[0];
+                var sampleUrl = sample.TryGetProperty("url", out var urlEl) ? urlEl.GetString() ?? "" : "";
+                var sampleTitle = sample.TryGetProperty("name", out var titleEl) ? titleEl.GetString() ?? "" : "";
+
+                return new Dictionary<string, string>
+                {
+                    ["source_row"] = sourceRow.ToString(),
+                    ["domain"] = domain,
+                    ["json_url"] = jsonUrl,
+                    ["status_code"] = ((int)response.StatusCode).ToString(),
+                    ["job_links_found"] = totalJobs.ToString(),
+                    ["sample_job_url"] = sampleUrl,
+                    ["sample_title"] = sampleTitle,
+                    ["error"] = "",
+                    ["elapsed_seconds"] = (DateTime.UtcNow - started).TotalSeconds.ToString("0.00")
+                };
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        private static async Task<Dictionary<string, string>> DiscoverOracleCloudAsync(int sourceRow, string domain)
+        {
+            var started = DateTime.UtcNow;
+            var site = await DiscoverOracleSiteNumberAsync(domain) ?? "CX";
+
+            var apiUrl = OracleCloudApiUrl(domain, site, 1, 0);
+            var careersUrl = $"https://{domain}/hcmUI/CandidateExperience/en/sites/{site}";
+
+            try
+            {
+                using var response = await GetWithTimeoutAsync(apiUrl, TimeSpan.FromSeconds(8));
+                var text = await response.Content.ReadAsStringAsync();
+                if (!response.IsSuccessStatusCode) return null;
+
+                using var doc = JsonDocument.Parse(text);
+                if (!TryGetOracleSearch(doc.RootElement, out var search)) return null;
+
+                var totalJobs = TryGetInt(search, "TotalJobsCount");
+                if (totalJobs <= 0) return null;
+
+                var sampleId = "";
+                var sampleTitle = "";
+                if (search.TryGetProperty("requisitionList", out var list) &&
+                    list.ValueKind == JsonValueKind.Array &&
+                    list.GetArrayLength() > 0)
+                {
+                    var sample = list[0];
+                    sampleId = GetJsonString(sample, "Id");
+                    sampleTitle = GetJsonString(sample, "Title");
+                }
+
+                var sampleCompany = "";
+                if (search.TryGetProperty("organizationsFacet", out var orgs) &&
+                    orgs.ValueKind == JsonValueKind.Array &&
+                    orgs.GetArrayLength() > 0)
+                {
+                    sampleCompany = GetJsonString(orgs[0], "Name");
+                }
+
+                return new Dictionary<string, string>
+                {
+                    ["source_row"] = sourceRow.ToString(),
+                    ["domain"] = domain,
+                    ["site"] = site,
+                    ["api_url"] = OracleCloudApiUrl(domain, site, 100, 0),
+                    ["careers_url"] = careersUrl,
+                    ["status_code"] = ((int)response.StatusCode).ToString(),
+                    ["validated"] = "True",
+                    ["total_jobs"] = totalJobs.ToString(),
+                    ["sample_job_id"] = sampleId,
+                    ["sample_title"] = sampleTitle,
+                    ["sample_company"] = sampleCompany,
+                    ["sample_job_url"] = string.IsNullOrWhiteSpace(sampleId) ? "" : OracleCloudJobUrl(domain, site, sampleId),
+                    ["error"] = "",
+                    ["elapsed_seconds"] = (DateTime.UtcNow - started).TotalSeconds.ToString("0.00")
+                };
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        private static async Task<Dictionary<string, string>> DiscoverPinpointHqAsync(int sourceRow, string domain)
+        {
+            var started = DateTime.UtcNow;
+            var rssUrl = $"https://{domain}/jobs.rss";
+            var careersUrl = $"https://{domain}/";
+
+            try
+            {
+                using var response = await GetWithTimeoutAsync(rssUrl, TimeSpan.FromSeconds(6));
+                var text = await response.Content.ReadAsStringAsync();
+                if (!response.IsSuccessStatusCode) return null;
+
+                var doc = XDocument.Parse(text);
+                var items = doc.Descendants("item").ToList();
+                if (items.Count == 0) return null;
+
+                var sample = items.FirstOrDefault();
+                var sampleUrl = WebUtility.HtmlDecode((string)sample?.Element("link") ?? "").Trim();
+                var sampleTitle = WebUtility.HtmlDecode((string)sample?.Element("title") ?? "").Trim();
+                var samplePostedAt = WebUtility.HtmlDecode((string)sample?.Element("pubDate") ?? "").Trim();
+
+                return new Dictionary<string, string>
+                {
+                    ["source_row"] = sourceRow.ToString(),
+                    ["domain"] = domain,
+                    ["rss_url"] = rssUrl,
+                    ["careers_url"] = careersUrl,
+                    ["status_code"] = ((int)response.StatusCode).ToString(),
+                    ["job_links_found"] = items.Count.ToString(),
+                    ["sample_job_url"] = sampleUrl,
+                    ["sample_title"] = sampleTitle,
+                    ["sample_posted_at"] = samplePostedAt,
+                    ["error"] = "",
+                    ["elapsed_seconds"] = (DateTime.UtcNow - started).TotalSeconds.ToString("0.00")
+                };
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        private static async Task<Dictionary<string, string>> DiscoverPersonioAsync(int sourceRow, string domain)
+        {
+            var started = DateTime.UtcNow;
+            var xmlUrl = $"https://{domain}/xml";
+            var careersUrl = $"https://{domain}/";
+
+            try
+            {
+                using var response = await GetWithTimeoutAsync(xmlUrl, TimeSpan.FromSeconds(8));
+                var text = await response.Content.ReadAsStringAsync();
+                if (!response.IsSuccessStatusCode) return null;
+
+                var doc = XDocument.Parse(text);
+                var positions = doc.Descendants("position").ToList();
+                if (positions.Count == 0) return null;
+
+                var sample = positions.FirstOrDefault();
+                var sampleId = ElementText(sample, "id");
+                var sampleTitle = ElementText(sample, "name");
+                var samplePostedAt = ElementText(sample, "createdAt");
+
+                return new Dictionary<string, string>
+                {
+                    ["source_row"] = sourceRow.ToString(),
+                    ["domain"] = domain,
+                    ["xml_url"] = xmlUrl,
+                    ["careers_url"] = careersUrl,
+                    ["status_code"] = ((int)response.StatusCode).ToString(),
+                    ["job_links_found"] = positions.Count.ToString(),
+                    ["sample_job_url"] = string.IsNullOrWhiteSpace(sampleId) ? careersUrl : $"https://{domain}/job/{sampleId}",
+                    ["sample_title"] = sampleTitle,
+                    ["sample_posted_at"] = samplePostedAt,
+                    ["error"] = "",
+                    ["elapsed_seconds"] = (DateTime.UtcNow - started).TotalSeconds.ToString("0.00")
+                };
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        private static async Task<Dictionary<string, string>> DiscoverFreshteamAsync(int sourceRow, string domain)
+        {
+            var started = DateTime.UtcNow;
+            var listUrl = $"https://{domain}/jobs";
+
+            try
+            {
+                using var response = await GetWithTimeoutAsync(listUrl, TimeSpan.FromSeconds(8));
+                var html = await response.Content.ReadAsStringAsync();
+                if (!response.IsSuccessStatusCode) return null;
+
+                var links = ExtractFreshteamJobLinks($"https://{domain}", html);
+                if (links.Count == 0) return null;
+
+                return new Dictionary<string, string>
+                {
+                    ["source_row"] = sourceRow.ToString(),
+                    ["domain"] = domain,
+                    ["list_url"] = listUrl,
+                    ["status_code"] = ((int)response.StatusCode).ToString(),
+                    ["job_links_found"] = links.Count.ToString(),
+                    ["sample_job_url"] = links.FirstOrDefault() ?? "",
+                    ["sample_title"] = FreshteamTitleForUrl(html, links.FirstOrDefault()),
+                    ["error"] = "",
+                    ["elapsed_seconds"] = (DateTime.UtcNow - started).TotalSeconds.ToString("0.00")
+                };
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        private static async Task<Dictionary<string, string>> DiscoverJobsoidAsync(int sourceRow, string domain)
+        {
+            var started = DateTime.UtcNow;
+            var apiUrl = $"https://{domain}/api/v1/jobs";
+            var careersUrl = $"https://{domain}/";
+
+            try
+            {
+                using var response = await GetWithTimeoutAsync(apiUrl, TimeSpan.FromSeconds(8));
+                var text = await response.Content.ReadAsStringAsync();
+                if (!response.IsSuccessStatusCode) return null;
+
+                using var doc = JsonDocument.Parse(text);
+                if (doc.RootElement.ValueKind != JsonValueKind.Array) return null;
+
+                var count = doc.RootElement.GetArrayLength();
+                if (count == 0) return null;
+
+                var sample = doc.RootElement[0];
+                var sampleUrl = GetJsonString(sample, "hostedUrl");
+                var sampleTitle = GetJsonString(sample, "title");
+                var samplePostedAt = GetJsonString(sample, "postedDate");
+
+                return new Dictionary<string, string>
+                {
+                    ["source_row"] = sourceRow.ToString(),
+                    ["domain"] = domain,
+                    ["api_url"] = apiUrl,
+                    ["careers_url"] = careersUrl,
+                    ["status_code"] = ((int)response.StatusCode).ToString(),
+                    ["job_links_found"] = count.ToString(),
+                    ["sample_job_url"] = sampleUrl,
+                    ["sample_title"] = sampleTitle,
+                    ["sample_posted_at"] = samplePostedAt,
+                    ["error"] = "",
+                    ["elapsed_seconds"] = (DateTime.UtcNow - started).TotalSeconds.ToString("0.00")
+                };
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        private static async Task<Dictionary<string, string>> DiscoverApplicantProAsync(int sourceRow, string domain)
+        {
+            var started = DateTime.UtcNow;
+            var careersUrl = $"https://{domain}/jobs/";
+
+            try
+            {
+                var siteId = await ApplicantProScraper.DiscoverSiteIdAsync(domain);
+                if (string.IsNullOrWhiteSpace(siteId)) return null;
+
+                var listUrl = ApplicantProScraper.ApplicantProListUrl(domain, siteId);
+                using var request = new HttpRequestMessage(HttpMethod.Get, listUrl);
+                request.Headers.TryAddWithoutValidation("Referer", careersUrl);
+                using var response = await _http.SendAsync(request);
+                var text = await response.Content.ReadAsStringAsync();
+                if (!response.IsSuccessStatusCode) return null;
+
+                using var doc = JsonDocument.Parse(text);
+                if (!doc.RootElement.TryGetProperty("data", out var data) ||
+                    !data.TryGetProperty("jobs", out var jobs) ||
+                    jobs.ValueKind != JsonValueKind.Array)
+                {
+                    return null;
+                }
+
+                var count = jobs.GetArrayLength();
+                if (count == 0) return null;
+
+                var sample = jobs[0];
+                var sampleId = GetJsonString(sample, "id");
+                var sampleTitle = GetJsonString(sample, "title");
+                var sampleUrl = GetJsonString(sample, "jobUrl");
+                if (string.IsNullOrWhiteSpace(sampleUrl) && !string.IsNullOrWhiteSpace(sampleId))
+                {
+                    sampleUrl = $"https://{domain}/jobs/{sampleId}";
+                }
+
+                return new Dictionary<string, string>
+                {
+                    ["source_row"] = sourceRow.ToString(),
+                    ["domain"] = domain,
+                    ["site_id"] = siteId,
+                    ["list_url"] = listUrl,
+                    ["careers_url"] = careersUrl,
+                    ["status_code"] = ((int)response.StatusCode).ToString(),
+                    ["job_links_found"] = count.ToString(),
+                    ["sample_job_url"] = sampleUrl,
+                    ["sample_title"] = sampleTitle,
+                    ["error"] = "",
+                    ["elapsed_seconds"] = (DateTime.UtcNow - started).TotalSeconds.ToString("0.00")
+                };
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        private static async Task<Dictionary<string, string>> DiscoverCatsOneAsync(int sourceRow, string domain)
+        {
+            var started = DateTime.UtcNow;
+
+            try
+            {
+                var result = await CatsOneScraper.DiscoverAsync(domain);
+                if (result == null || result.JobCount <= 0) return null;
+
+                return new Dictionary<string, string>
+                {
+                    ["source_row"] = sourceRow.ToString(),
+                    ["domain"] = domain,
+                    ["portal_id"] = result.PortalId,
+                    ["careers_url"] = result.CareersUrl,
+                    ["status_code"] = "200",
+                    ["job_links_found"] = result.JobCount.ToString(),
+                    ["sample_job_url"] = result.SampleJobUrl,
+                    ["sample_title"] = result.SampleTitle,
+                    ["error"] = "",
+                    ["elapsed_seconds"] = (DateTime.UtcNow - started).TotalSeconds.ToString("0.00")
+                };
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        private static async Task<Dictionary<string, string>> DiscoverZohoRecruitAsync(int sourceRow, string domain)
+        {
+            var started = DateTime.UtcNow;
+
+            try
+            {
+                var result = await ZohoRecruitScraper.DiscoverAsync(domain);
+                if (result == null || result.JobCount <= 0) return null;
+
+                return new Dictionary<string, string>
+                {
+                    ["source_row"] = sourceRow.ToString(),
+                    ["domain"] = domain,
+                    ["careers_url"] = result.CareersUrl,
+                    ["status_code"] = "200",
+                    ["job_links_found"] = result.JobCount.ToString(),
+                    ["sample_job_url"] = result.SampleJobUrl,
+                    ["sample_title"] = result.SampleTitle,
+                    ["error"] = "",
+                    ["elapsed_seconds"] = (DateTime.UtcNow - started).TotalSeconds.ToString("0.00")
+                };
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        private static async Task<string> DiscoverOracleSiteNumberAsync(string domain)
+        {
+            foreach (var site in new[] { "CX", "CX_1" })
+            {
+                try
+                {
+                    using var response = await GetWithTimeoutAsync($"https://{domain}/hcmUI/CandidateExperience/en/sites/{site}", TimeSpan.FromSeconds(5));
+                    if (!response.IsSuccessStatusCode) continue;
+
+                    var html = await response.Content.ReadAsStringAsync();
+                    var match = OracleSiteNumberPattern.Match(html ?? "");
+                    if (match.Success) return match.Groups["site"].Value;
+                    if (html.Contains("CandidateExperience", StringComparison.OrdinalIgnoreCase)) return site;
+                }
+                catch
+                {
+                    continue;
+                }
+            }
+
+            return null;
+        }
+
+        private static async Task<HttpResponseMessage> GetWithTimeoutAsync(string url, TimeSpan timeout)
+        {
+            using var cts = new CancellationTokenSource(timeout);
+            return await _http.GetAsync(url, cts.Token);
+        }
+
+        private static string OracleCloudApiUrl(string domain, string site, int limit, int offset)
+        {
+            return $"https://{domain}/hcmRestApi/resources/latest/recruitingCEJobRequisitions?onlyData=true&finder=findReqs;siteNumber={site},limit={limit},offset={offset},sortBy=POSTING_DATES_DESC&expand=requisitionList";
+        }
+
+        private static string OracleCloudJobUrl(string domain, string site, string id)
+        {
+            return $"https://{domain}/hcmUI/CandidateExperience/en/sites/{site}/job/{id}";
+        }
+
+        private static bool TryGetOracleSearch(JsonElement root, out JsonElement search)
+        {
+            search = default;
+            if (!root.TryGetProperty("items", out var items) ||
+                items.ValueKind != JsonValueKind.Array ||
+                items.GetArrayLength() == 0)
+            {
+                return false;
+            }
+
+            search = items[0];
+            return true;
+        }
+
+        private static int TryGetInt(JsonElement element, string property)
+        {
+            if (!element.TryGetProperty(property, out var value)) return 0;
+            if (value.ValueKind == JsonValueKind.Number && value.TryGetInt32(out var number)) return number;
+            return int.TryParse(value.ToString(), out var parsed) ? parsed : 0;
+        }
+
+        private static string GetJsonString(JsonElement element, string property)
+        {
+            if (!element.TryGetProperty(property, out var value)) return "";
+            if (value.ValueKind == JsonValueKind.Null || value.ValueKind == JsonValueKind.Undefined) return "";
+            return value.ValueKind == JsonValueKind.String ? value.GetString() ?? "" : value.ToString();
+        }
+
         private static List<string> ExtractJobLinks(string baseUrl, string html)
         {
             var links = new List<string>();
@@ -363,6 +1171,31 @@ namespace LinkupFeed
                 if (seen.Add(url)) links.Add(url);
             }
             return links;
+        }
+
+        private static List<string> ExtractFreshteamJobLinks(string baseUrl, string html)
+        {
+            var links = new List<string>();
+            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (Match match in FreshteamJobLinkPattern.Matches(html ?? ""))
+            {
+                var url = new Uri(new Uri(baseUrl), WebUtility.HtmlDecode(match.Groups["href"].Value)).ToString().Split('#')[0];
+                if (seen.Add(url)) links.Add(url);
+            }
+            return links;
+        }
+
+        private static string FreshteamTitleForUrl(string html, string url)
+        {
+            if (string.IsNullOrWhiteSpace(url)) return "";
+            var path = Uri.TryCreate(url, UriKind.Absolute, out var uri) ? uri.AbsolutePath : url;
+            var match = Regex.Match(html ?? "", $"href=[\"']{Regex.Escape(path)}[\"'][\\s\\S]*?<div[^>]+class=[\"'][^\"']*job-title[^\"']*[\"'][^>]*>(?<title>[\\s\\S]*?)</div>", RegexOptions.IgnoreCase);
+            return match.Success ? WebUtility.HtmlDecode(Regex.Replace(match.Groups["title"].Value, "<[^>]+>", " ")).Trim() : "";
+        }
+
+        private static string ElementText(XElement element, string name)
+        {
+            return element?.Element(name)?.Value?.Trim() ?? "";
         }
 
         private static string ReadDomain(Dictionary<string, string> row)

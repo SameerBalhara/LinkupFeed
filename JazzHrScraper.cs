@@ -3,6 +3,8 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Net;
 using System.Net.Http;
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Threading;
@@ -157,7 +159,7 @@ namespace LinkupFeed
                 return new ScrapedJob
                 {
                     SourceId = SourceId,
-                    ExternalId = $"jazzhr:{AtsCsv.Get(site, "domain").ToLowerInvariant()}:{jobId}",
+                    ExternalId = TenantScopedReferenceId(AtsCsv.Get(site, "domain"), jobId),
                     Title = title,
                     Company = company,
                     Location = string.IsNullOrWhiteSpace(location) && remote ? "Remote" : location,
@@ -175,7 +177,23 @@ namespace LinkupFeed
             }
         }
 
-        private static string BaseUrl(string applyUrl, string domain)
+
+        private static string TenantScopedReferenceId(string domain, string id)
+        {
+            var tenant = NormalizeReferenceTenant(domain);
+            var raw = string.IsNullOrWhiteSpace(id) ? "" : id.Trim();
+            var fingerprint = $"jazzhr|{tenant}|{raw}".ToLowerInvariant();
+            var hash = SHA256.HashData(Encoding.UTF8.GetBytes(fingerprint));
+            return $"{SourceId}:h{Convert.ToHexString(hash, 0, 8).ToLowerInvariant()}";
+        }
+
+        private static string NormalizeReferenceTenant(string domain)
+        {
+            var value = (domain ?? "").Trim().ToLowerInvariant();
+            if (Uri.TryCreate(value, UriKind.Absolute, out var uri)) value = uri.Host;
+            value = value.Split('/')[0].Trim();
+            return value.StartsWith("www.") ? value.Substring(4) : value;
+        }        private static string BaseUrl(string applyUrl, string domain)
         {
             if (Uri.TryCreate(applyUrl, UriKind.Absolute, out var uri))
             {
@@ -325,10 +343,33 @@ namespace LinkupFeed
             foreach (var pattern in patterns)
             {
                 var match = Regex.Match(html ?? "", pattern, RegexOptions.IgnoreCase | RegexOptions.Singleline);
-                if (match.Success) return StripTags(match.Groups["loc"].Value);
+                if (match.Success)
+                {
+                    var location = CleanLocationCandidate(StripTags(match.Groups["loc"].Value));
+                    if (!string.IsNullOrWhiteSpace(location)) return location;
+                }
             }
 
             return "";
+        }
+
+        private static string CleanLocationCandidate(string value)
+        {
+            value = WebUtility.HtmlDecode(value ?? "").Trim();
+            if (string.IsNullOrWhiteSpace(value)) return "";
+
+            value = Regex.Replace(value, @"\s+", " ").Trim();
+            value = Regex.Split(value, @"\*\*\s*(Responsibilities|Role Overview|Job Description|Description|Key Responsibilities)\s*:?\s*\*\*", RegexOptions.IgnoreCase).FirstOrDefault() ?? value;
+            value = Regex.Split(value, @"\b(Responsibilities|Role Overview|Job Description|Description|Key Responsibilities)\s*:", RegexOptions.IgnoreCase).FirstOrDefault() ?? value;
+            value = value.Replace("**", "").Trim();
+            value = value.Trim('-', ':', '|', ',', '.').Trim();
+
+            if (Regex.IsMatch(value, @"\b(position|responsibilit(?:y|ies)|overview|description|candidate|applicant|authorized|required|business hours|any location|join our|seeking|build and maintain)\b", RegexOptions.IgnoreCase))
+            {
+                return "";
+            }
+
+            return value.Length <= 120 ? value : "";
         }
 
         private static string ExtractDescriptionFromHtml(string html)

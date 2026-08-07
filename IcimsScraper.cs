@@ -3,6 +3,8 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Net;
 using System.Net.Http;
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Threading;
@@ -161,7 +163,7 @@ namespace LinkupFeed
                 return new ScrapedJob
                 {
                     SourceId = SourceId,
-                    ExternalId = $"icims:{AtsCsv.Get(site, "domain").ToLowerInvariant()}:{JobIdFromUrl(finalUrl)}",
+                    ExternalId = IcimsReferenceId(AtsCsv.Get(site, "domain"), finalUrl),
                     Title = title,
                     Company = company,
                     Location = string.IsNullOrWhiteSpace(location) && remote ? "Remote" : location,
@@ -223,6 +225,23 @@ namespace LinkupFeed
         {
             var match = Regex.Match(url ?? "", @"/jobs/(\d+)(?:/|$)");
             return match.Success ? match.Groups[1].Value : url;
+        }
+        private static string IcimsReferenceId(string domain, string url)
+        {
+            var jobId = JobIdFromUrl(url);
+            var tenant = NormalizeReferenceTenant(domain);
+            var raw = string.IsNullOrWhiteSpace(jobId) ? url ?? "" : jobId;
+            var fingerprint = $"icims|{tenant}|{raw}".ToLowerInvariant();
+            var hash = SHA256.HashData(Encoding.UTF8.GetBytes(fingerprint));
+            return $"{SourceId}:h{Convert.ToHexString(hash, 0, 8).ToLowerInvariant()}";
+        }
+
+        private static string NormalizeReferenceTenant(string domain)
+        {
+            var value = (domain ?? "").Trim().ToLowerInvariant();
+            if (Uri.TryCreate(value, UriKind.Absolute, out var uri)) value = uri.Host;
+            value = value.Split('/')[0].Trim();
+            return value.StartsWith("www.") ? value.Substring(4) : value;
         }
 
         private static Dictionary<string, JsonElement> JsonLdJobPosting(string html)
