@@ -15,8 +15,11 @@ namespace LinkupFeed
     internal class WorkdayScraper
     {
         private const int SourceId = 99;
-        private const int Workers = 6;
+        private const int Workers = 2;
+        private const int DetailWorkersPerSite = 2;
         private const int PageSize = 20;
+        private const int PageDelayMs = 250;
+        private const int MaxHttpAttempts = 5;
 
         private static readonly HttpClient _http = new HttpClient(new HttpClientHandler
         {
@@ -81,10 +84,10 @@ namespace LinkupFeed
                         Encoding.UTF8,
                         "application/json");
 
-                    using var response = await _http.SendAsync(request);
+                    using var response = await SendWithRetryAsync(request, $"{domain} list offset={offset}");
                     if (!response.IsSuccessStatusCode)
                     {
-                        Console.WriteLine($"[Workday] {domain} HTTP {(int)response.StatusCode}");
+                        Console.WriteLine($"[Workday] {domain} HTTP {(int)response.StatusCode} after retries; stopping site at offset={offset}/{total}");
                         break;
                     }
 
@@ -99,25 +102,43 @@ namespace LinkupFeed
                         break;
                     }
 
-                    foreach (var posting in postings.EnumerateArray())
+                    var postingSnapshots = postings.EnumerateArray()
+                        .Select(p => p.Clone())
+                        .ToList();
+                    using var detailGate = new SemaphoreSlim(DetailWorkersPerSite);
+
+                    var mappedJobs = await Task.WhenAll(postingSnapshots.Select(async posting =>
                     {
                         var job = MapJob(row, posting);
-                        if (job != null)
+                        if (job == null) return null;
+
+                        await detailGate.WaitAsync();
+                        try
                         {
                             var detail = await FetchDetailAsync(row, GetText(posting, "externalPath") ?? "");
                             job.Description = detail.Description;
                             job.JobType = FirstNonEmpty(job.JobType, detail.JobType);
                             job.DatePosted = job.DatePosted ?? detail.DatePosted;
                             job.ExternalId = PreferredWorkdayReferenceId(job.ExternalId, detail.ReferenceId);
-
-                            jobs.Add(job);
+                            return job;
                         }
-                    }
+                        finally
+                        {
+                            detailGate.Release();
+                        }
+                    }));
+
+                    jobs.AddRange(mappedJobs.Where(j => j != null));
 
                     pages++;
                     offset += PageSize;
+                    if (pages % 25 == 0)
+                    {
+                        Console.WriteLine($"[Workday] {domain} progress: offset={Math.Min(offset, total)}/{total}, kept={jobs.Count}");
+                    }
+
                     if (maxPages > 0 && pages >= maxPages) break;
-                    await Task.Delay(50);
+                    await Task.Delay(PageDelayMs);
                 }
 
                 var described = jobs.Count(j => !string.IsNullOrWhiteSpace(j.Description));
@@ -169,7 +190,7 @@ namespace LinkupFeed
                 using var request = new HttpRequestMessage(HttpMethod.Get, detailUrl);
                 request.Headers.Referrer = new Uri(JobUrl(row, externalPath));
 
-                using var response = await _http.SendAsync(request);
+                using var response = await SendWithRetryAsync(request, $"{AtsCsv.Get(row, "domain")} detail");
                 if (!response.IsSuccessStatusCode) return detail;
 
                 using var doc = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
@@ -221,6 +242,90 @@ namespace LinkupFeed
             {
                 return detail;
             }
+        }
+
+        private static async Task<HttpResponseMessage> SendWithRetryAsync(HttpRequestMessage request, string label)
+        {
+            for (var attempt = 1; attempt <= MaxHttpAttempts; attempt++)
+            {
+                var retryRequest = await CloneRequestAsync(request);
+                try
+                {
+                    var response = await _http.SendAsync(retryRequest);
+                    if (!ShouldRetry(response.StatusCode) || attempt == MaxHttpAttempts)
+                    {
+                        return response;
+                    }
+
+                    var delay = RetryDelay(response, attempt);
+                    var statusCode = (int)response.StatusCode;
+                    response.Dispose();
+                    Console.WriteLine($"[Workday] {label} HTTP {statusCode}; retry {attempt}/{MaxHttpAttempts - 1} in {delay.TotalSeconds:0.0}s");
+                    await Task.Delay(delay);
+                }
+                catch when (attempt < MaxHttpAttempts)
+                {
+                    var delay = RetryDelay(null, attempt);
+                    Console.WriteLine($"[Workday] {label} request failed; retry {attempt}/{MaxHttpAttempts - 1} in {delay.TotalSeconds:0.0}s");
+                    await Task.Delay(delay);
+                }
+            }
+
+            throw new HttpRequestException($"Workday request failed after {MaxHttpAttempts} attempts: {label}");
+        }
+
+        private static async Task<HttpRequestMessage> CloneRequestAsync(HttpRequestMessage request)
+        {
+            var clone = new HttpRequestMessage(request.Method, request.RequestUri)
+            {
+                Version = request.Version
+            };
+
+            foreach (var header in request.Headers)
+            {
+                clone.Headers.TryAddWithoutValidation(header.Key, header.Value);
+            }
+
+            if (request.Content != null)
+            {
+                var body = await request.Content.ReadAsStringAsync();
+                clone.Content = new StringContent(body, Encoding.UTF8, request.Content.Headers.ContentType?.MediaType ?? "application/json");
+                foreach (var header in request.Content.Headers)
+                {
+                    if (!string.Equals(header.Key, "Content-Type", StringComparison.OrdinalIgnoreCase))
+                    {
+                        clone.Content.Headers.TryAddWithoutValidation(header.Key, header.Value);
+                    }
+                }
+            }
+
+            return clone;
+        }
+
+        private static bool ShouldRetry(HttpStatusCode statusCode)
+        {
+            var code = (int)statusCode;
+            return code == 429 || code == 408 || code >= 500;
+        }
+
+        private static TimeSpan RetryDelay(HttpResponseMessage response, int attempt)
+        {
+            if (response?.Headers.RetryAfter?.Delta is TimeSpan delta && delta > TimeSpan.Zero)
+            {
+                return delta + TimeSpan.FromMilliseconds(Random.Shared.Next(250, 1000));
+            }
+
+            if (response?.Headers.RetryAfter?.Date is DateTimeOffset date)
+            {
+                var wait = date - DateTimeOffset.UtcNow;
+                if (wait > TimeSpan.Zero)
+                {
+                    return wait + TimeSpan.FromMilliseconds(Random.Shared.Next(250, 1000));
+                }
+            }
+
+            var seconds = Math.Min(45, Math.Pow(2, attempt) + Random.Shared.NextDouble());
+            return TimeSpan.FromSeconds(seconds);
         }
 
         private static string DetailApiUrl(Dictionary<string, string> row, string externalPath)

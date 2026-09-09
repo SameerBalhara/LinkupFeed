@@ -34,6 +34,13 @@ namespace LinkupFeed
         {
             // await RemoteJobsScraping();
 
+            var targetTable = GetStringArg(args, "--target-table") ?? GetStringArg(args, "--table");
+            if (!string.IsNullOrWhiteSpace(targetTable))
+            {
+                Environment.SetEnvironmentVariable(JobDatabaseSync.TargetTableEnvVar, targetTable);
+                Console.WriteLine($"[DB] Target table override enabled: {JobDatabaseSync.CurrentTargetTableName}");
+            }
+
             if (args != null && args.Length > 0 &&
                 (string.Equals(args[0], "refresh-ats-urls", StringComparison.OrdinalIgnoreCase) ||
                  string.Equals(args[0], "refreshurls", StringComparison.OrdinalIgnoreCase)))
@@ -43,6 +50,59 @@ namespace LinkupFeed
                     GetStringArg(args, "--output-root") ?? "outputs",
                     GetIntArg(args, "--limit"),
                     GetStringArg(args, "--only") ?? GetStringArg(args, "--source"));
+                return;
+            }
+
+            if (args != null && args.Length > 0 &&
+                (string.Equals(args[0], "discover-workday-commoncrawl", StringComparison.OrdinalIgnoreCase) ||
+                 string.Equals(args[0], "workday-commoncrawl", StringComparison.OrdinalIgnoreCase)))
+            {
+                await WorkdayCommonCrawlDiscovery.RunAsync(
+                    GetStringArg(args, "--input") ?? GetStringArg(args, "--job-sites"),
+                    GetStringArg(args, "--output") ?? GetStringArg(args, "--output-csv"),
+                    GetStringArg(args, "--index"),
+                    GetIntArg(args, "--limit") ?? 10,
+                    GetIntArg(args, "--cdx-limit") ?? 500,
+                    HasArg(args, "--skip-known"),
+                    GetIntArg(args, "--pages") ?? 1,
+                    GetIntArg(args, "--page-size"),
+                    GetStringArg(args, "--cc-url-pattern") ?? GetStringArg(args, "--commoncrawl-url-pattern"),
+                    GetIntArg(args, "--cdx-delay-ms") ?? 0,
+                    GetIntArg(args, "--validation-delay-ms") ?? 0,
+                    GetStringArg(args, "--skip-url-csv") ?? GetStringArg(args, "--skip-existing-csv"));
+                return;
+            }
+
+            if (args != null && args.Length > 0 &&
+                (string.Equals(args[0], "discover-workday-commoncrawl-slices", StringComparison.OrdinalIgnoreCase) ||
+                 string.Equals(args[0], "workday-commoncrawl-slices", StringComparison.OrdinalIgnoreCase)))
+            {
+                await WorkdayCommonCrawlDiscovery.RunSlicesAsync(
+                    GetStringArg(args, "--input") ?? GetStringArg(args, "--job-sites"),
+                    GetStringArg(args, "--output") ?? GetStringArg(args, "--output-csv"),
+                    GetStringArg(args, "--indexes") ?? GetStringArg(args, "--index"),
+                    GetStringArg(args, "--patterns") ?? GetStringArg(args, "--cc-url-patterns"),
+                    GetIntArg(args, "--limit") ?? 100,
+                    GetIntArg(args, "--cdx-limit") ?? 1000,
+                    HasArg(args, "--skip-known"),
+                    GetIntArg(args, "--pages") ?? 2,
+                    GetIntArg(args, "--page-size"),
+                    GetIntArg(args, "--cdx-delay-ms") ?? 1000,
+                    GetIntArg(args, "--validation-delay-ms") ?? 200,
+                    GetIntArg(args, "--slice-delay-ms") ?? 3000,
+                    GetStringArg(args, "--skip-url-csv") ?? GetStringArg(args, "--skip-existing-csv"));
+                return;
+            }
+
+            if (args != null && args.Length > 0 &&
+                (string.Equals(args[0], "export-workday-commoncrawl-jobs", StringComparison.OrdinalIgnoreCase) ||
+                 string.Equals(args[0], "workday-commoncrawl-jobs", StringComparison.OrdinalIgnoreCase)))
+            {
+                await WorkdayCommonCrawlDiscovery.ExportJobsAsync(
+                    GetStringArg(args, "--input") ?? GetStringArg(args, "--url-csv"),
+                    GetStringArg(args, "--output") ?? GetStringArg(args, "--output-csv"),
+                    GetIntArg(args, "--max-pages"),
+                    GetIntArg(args, "--max-jobs-per-site"));
                 return;
             }
 
@@ -531,6 +591,11 @@ namespace LinkupFeed
             {
                 throw new InvalidOperationException(
                     $"Set {JobDatabaseSync.ConnectionStringEnvVar} before running the combined scraper.");
+            }
+
+            if (writeToDatabase)
+            {
+                JobDatabaseSync.EnsureTargetTableExists(connectionString, "[All]");
             }
 
             var allJobs = new List<ScrapedJob>();

@@ -9,8 +9,37 @@ namespace LinkupFeed
     internal static class JobDatabaseSync
     {
         public const string ConnectionStringEnvVar = "ITJC_SCRAPPER_CONNECTION_STRING";
-        private const string TableName = "dbo.temp_tbl_Scrap_jobs";
+        public const string TargetTableEnvVar = "ITJC_SCRAPPER_TARGET_TABLE";
+        private const string DefaultTableName = "dbo.temp_tbl_Scrap_jobs";
+        private static string TableName => ResolveTargetTableName();
         private const int DuplicateUpdateBatchSize = 5000;
+
+        public static string CurrentTargetTableName => TableName;
+
+        public static void EnsureTargetTableExists(string connectionString, string logPrefix)
+        {
+            if (Same(TableName, DefaultTableName))
+            {
+                return;
+            }
+
+            using var conn = new SqlConnection(connectionString);
+            conn.Open();
+
+            using var cmd = conn.CreateCommand();
+            cmd.CommandTimeout = 120;
+            cmd.CommandText = $@"
+IF OBJECT_ID('{TableName}', 'U') IS NULL
+BEGIN
+    SELECT TOP (0) *
+    INTO {TableName}
+    FROM {DefaultTableName};
+END";
+            cmd.ExecuteNonQuery();
+
+            EnsureItClassificationColumns(conn);
+            Console.WriteLine($"{logPrefix} Target table ready: {TableName}");
+        }
 
         public static ExistingKeys LoadExistingKeys(string connectionString)
         {
@@ -1120,6 +1149,41 @@ WHERE LEN(category) > 30";
         private static bool Same(string left, string right)
         {
             return string.Equals((left ?? "").Trim(), (right ?? "").Trim(), StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static string ResolveTargetTableName()
+        {
+            var configured = Environment.GetEnvironmentVariable(TargetTableEnvVar);
+            if (string.IsNullOrWhiteSpace(configured))
+            {
+                return DefaultTableName;
+            }
+
+            var parts = configured.Trim().Split('.');
+            if (parts.Length == 1)
+            {
+                return $"dbo.{ValidateSqlIdentifier(parts[0], TargetTableEnvVar)}";
+            }
+
+            if (parts.Length == 2)
+            {
+                return $"{ValidateSqlIdentifier(parts[0], TargetTableEnvVar)}.{ValidateSqlIdentifier(parts[1], TargetTableEnvVar)}";
+            }
+
+            throw new InvalidOperationException($"{TargetTableEnvVar} must be a table name like temp_tbl_Scrap_jobs_compare or dbo.temp_tbl_Scrap_jobs_compare.");
+        }
+
+        private static string ValidateSqlIdentifier(string value, string settingName)
+        {
+            value = (value ?? "").Trim();
+            if (string.IsNullOrWhiteSpace(value) ||
+                value.Length > 128 ||
+                !value.All(ch => char.IsLetterOrDigit(ch) || ch == '_'))
+            {
+                throw new InvalidOperationException($"{settingName} contains an invalid SQL identifier: {value}");
+            }
+
+            return value;
         }
 
         private static void AddString(SqlCommand cmd, string name, string value, int maxLength)

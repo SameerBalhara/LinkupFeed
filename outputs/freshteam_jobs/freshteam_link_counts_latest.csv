@@ -1,9 +1,9 @@
 ﻿source_row,domain,list_url,status_code,job_links_found,sample_job_url,sample_title,error,elapsed_seconds
-46,a1fed.freshteam.com,https://a1fed.freshteam.com/jobs,200,12,https://a1fed.freshteam.com/jobs/LExmwPQNhgGp/senior-servicenow-developer-u-s-based-fully-remote,"Senior ServiceNow Developer, U.S. Based Fully Remote",,0.45
-2377,codvo-team.freshteam.com,https://codvo-team.freshteam.com/jobs,200,210,https://codvo-team.freshteam.com/jobs/NxELI8MAvp69/marketing-director_ai-native-growth-remote,Marketing Director_AI Native Growth (Remote),,1.37
-2703,definer.freshteam.com,https://definer.freshteam.com/jobs,200,3,https://definer.freshteam.com/jobs/_xHgZlVUfKwQ/ui-ux-graphic-designer-remote,UI UX Graphic Designer (Remote),,0.62
-2789,doppiogroup.freshteam.com,https://doppiogroup.freshteam.com/jobs,200,4,https://doppiogroup.freshteam.com/jobs/5nkOYkENGZKl/director-of-finance-accounting,Director of Finance & Accounting,,0.38
-3165,esprow.freshteam.com,https://esprow.freshteam.com/jobs,200,13,https://esprow.freshteam.com/jobs/kYH_JiyyxkEm/digital-marketing-specialist-technical-software-remote,,,0.61
-3415,fieldmaterials.freshteam.com,https://fieldmaterials.freshteam.com/jobs,200,8,https://fieldmaterials.freshteam.com/jobs/t93dgqPnhVL2/growth-marketing-marketing-operations-manager-remote,Growth Marketing / Marketing Operations Manager (Remote),,0.60
-3955,homelandls.freshteam.com,https://homelandls.freshteam.com/jobs,200,141,https://homelandls.freshteam.com/jobs/rscw3MfkwnbX/vri-opi-spanish-english-interpreter,VRI/OPI Spanish-English Interpreter,,0.89
-7391,vasl-talent.freshteam.com,https://vasl-talent.freshteam.com/jobs,200,53,https://vasl-talent.freshteam.com/jobs/ofgrbZFE6Xab/content-writer-e-commerce-remote,Content Writer (E-commerce) (Remote),,0.67
+46,a1fed.freshteam.com,https://a1fed.freshteam.com/jobs,200,12,https://a1fed.freshteam.com/jobs/LExmwPQNhgGp/senior-servicenow-developer-u-s-based-fully-remote,"Senior ServiceNow Developer, U.S. Based Fully Remote",,0.29
+2377,codvo-team.freshteam.com,https://codvo-team.freshteam.com/jobs,200,210,https://codvo-team.freshteam.com/jobs/NxELI8MAvp69/marketing-director_ai-native-growth-remote,Marketing Director_AI Native Growth (Remote),,0.67
+2703,definer.freshteam.com,https://definer.freshteam.com/jobs,200,3,https://definer.freshteam.com/jobs/_xHgZlVUfKwQ/ui-ux-graphic-designer-remote,UI UX Graphic Designer (Remote),,0.24
+2789,doppiogroup.freshteam.com,https://doppiogroup.freshteam.com/jobs,200,3,https://doppiogroup.freshteam.com/jobs/5nkOYkENGZKl/director-of-finance-accounting,Director of Finance & Accounting,,0.24
+3165,esprow.freshteam.com,https://esprow.freshteam.com/jobs,200,13,https://esprow.freshteam.com/jobs/kYH_JiyyxkEm/digital-marketing-specialist-technical-software-remote,,,0.25
+3415,fieldmaterials.freshteam.com,https://fieldmaterials.freshteam.com/jobs,200,8,https://fieldmaterials.freshteam.com/jobs/t93dgqPnhVL2/growth-marketing-marketing-operations-manager-remote,Growth Marketing / Marketing Operations Manager (Remote),,0.26
+3955,homelandls.freshteam.com,https://homelandls.freshteam.com/jobs,200,141,https://homelandls.freshteam.com/jobs/rscw3MfkwnbX/vri-opi-spanish-english-interpreter,VRI/OPI Spanish-English Interpreter,,0.48
+7391,vasl-talent.freshteam.com,https://vasl-talent.freshteam.com/jobs,200,53,https://vasl-talent.freshteam.com/jobs/ofgrbZFE6Xab/content-writer-e-commerce-remote,Content Writer (E-commerce) (Remote),,0.34
