@@ -46,7 +46,6 @@ namespace LinkupFeed
 
         public async Task<List<ScrapedJob>> FetchJobsAsync(string onlyCompany = null)
         {
-            var results = new List<ScrapedJob>();
             var companies = Companies.AsEnumerable();
 
             if (!string.IsNullOrWhiteSpace(onlyCompany))
@@ -56,6 +55,39 @@ namespace LinkupFeed
                     string.Equals(c.Company, onlyCompany, StringComparison.OrdinalIgnoreCase));
             }
 
+            return await FetchJobsForCompaniesAsync(companies);
+        }
+
+        public async Task<List<ScrapedJob>> FetchJobsFromCsvAsync(string inputCsv, int? limitSites = null)
+        {
+            var rows = AtsCsv.ReadRows(inputCsv)
+                .Select(row =>
+                {
+                    var identifier = FirstNonEmpty(
+                        AtsCsv.Get(row, "identifier"),
+                        AtsCsv.Get(row, "tenant"),
+                        AtsCsv.Get(row, "company"));
+                    var company = FirstNonEmpty(AtsCsv.Get(row, "company"), identifier);
+                    return (Identifier: identifier, Company: company);
+                })
+                .Where(c => !string.IsNullOrWhiteSpace(c.Identifier))
+                .GroupBy(c => c.Identifier, StringComparer.OrdinalIgnoreCase)
+                .Select(g => g.First())
+                .ToList();
+
+            if (limitSites.HasValue)
+            {
+                rows = rows.Take(limitSites.Value).ToList();
+            }
+
+            Console.WriteLine($"[SmartRecruiters] Loaded {rows.Count} company rows from {inputCsv}");
+            return await FetchJobsForCompaniesAsync(rows);
+        }
+
+        private async Task<List<ScrapedJob>> FetchJobsForCompaniesAsync(IEnumerable<(string Identifier, string Company)> companies)
+        {
+            var results = new List<ScrapedJob>();
+
             foreach (var (identifier, fallbackCompanyName) in companies)
             {
                 try
@@ -64,22 +96,28 @@ namespace LinkupFeed
                     var postings = await FetchPostingsAsync(identifier);
 
                     int added = 0;
-                    foreach (var posting in postings)
+                    foreach (var batch in postings.Chunk(8))
                     {
-                        try
+                        var mappedJobs = await Task.WhenAll(batch.Select(async posting =>
                         {
-                            var job = await MapPostingAsync(identifier, fallbackCompanyName, posting);
-                            if (job == null) continue;
+                            try
+                            {
+                                return await MapPostingAsync(identifier, fallbackCompanyName, posting);
+                            }
+                            catch (Exception ex)
+                            {
+                                Console.WriteLine($"[SmartRecruiters] {identifier} posting error: {ex.Message}");
+                                return null;
+                            }
+                        }));
 
+                        foreach (var job in mappedJobs.Where(job => job != null))
+                        {
                             results.Add(job);
                             added++;
                         }
-                        catch (Exception ex)
-                        {
-                            Console.WriteLine($"[SmartRecruiters] {identifier} posting error: {ex.Message}");
-                        }
 
-                        await Task.Delay(100);
+                        await Task.Delay(150);
                     }
 
                     Console.WriteLine($"[SmartRecruiters] {identifier} -> {added} US/remote jobs");
@@ -93,6 +131,11 @@ namespace LinkupFeed
             }
 
             return results;
+        }
+
+        private static string FirstNonEmpty(params string[] values)
+        {
+            return values.FirstOrDefault(v => !string.IsNullOrWhiteSpace(v)) ?? "";
         }
 
         private static async Task<List<JsonElement>> FetchPostingsAsync(string identifier)
@@ -131,6 +174,13 @@ namespace LinkupFeed
 
         private static async Task<ScrapedJob> MapPostingAsync(string identifier, string fallbackCompanyName, JsonElement posting)
         {
+            var listingLocation = FormatLocation(posting);
+            var listingIsRemote = IsRemote(posting, listingLocation);
+            if (!UsLocationFilter.IsUs(listingLocation) && !listingIsRemote)
+            {
+                return null;
+            }
+
             var details = await FetchDetailsAsync(identifier, posting);
             var source = details ?? posting;
 
@@ -179,7 +229,7 @@ namespace LinkupFeed
 
         private static async Task<string> FetchJsonAsync(string url, string identifier)
         {
-            const int maxAttempts = 2;
+            const int maxAttempts = 4;
 
             for (int attempt = 1; attempt <= maxAttempts; attempt++)
             {
@@ -189,8 +239,17 @@ namespace LinkupFeed
                 }
                 catch (TaskCanceledException) when (attempt < maxAttempts)
                 {
-                    Console.WriteLine($"[SmartRecruiters] {identifier} -> timeout, retrying once");
-                    await Task.Delay(2000);
+                    Console.WriteLine($"[SmartRecruiters] {identifier} -> timeout, retrying ({attempt}/{maxAttempts})");
+                    await Task.Delay(1000 * attempt);
+                }
+                catch (HttpRequestException ex) when (
+                    attempt < maxAttempts &&
+                    (ex.StatusCode == System.Net.HttpStatusCode.TooManyRequests ||
+                     ex.StatusCode == System.Net.HttpStatusCode.RequestTimeout ||
+                     (int?)ex.StatusCode >= 500))
+                {
+                    Console.WriteLine($"[SmartRecruiters] {identifier} -> HTTP {(int?)ex.StatusCode}, retrying ({attempt}/{maxAttempts})");
+                    await Task.Delay(1500 * attempt);
                 }
             }
 

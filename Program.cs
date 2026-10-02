@@ -379,7 +379,21 @@ namespace LinkupFeed
                 await RunSmartRecruitersOnlyAsync(
                     HasArg(args, "--write-db") && !HasArg(args, "--dry-run") && !HasArg(args, "--no-write-db"),
                     GetIntArg(args, "--limit") ?? GetIntArg(args, "--max-inserts"),
-                    GetStringArg(args, "--company") ?? GetStringArg(args, "--slug"));
+                    GetStringArg(args, "--company") ?? GetStringArg(args, "--slug"),
+                    GetStringArg(args, "--url-csv"),
+                    GetIntArg(args, "--limit-sites"));
+                return;
+            }
+
+            if (args != null && args.Length > 0 &&
+                string.Equals(args[0], "greenhouse", StringComparison.OrdinalIgnoreCase))
+            {
+                await RunGreenhouseOnlyAsync(
+                    HasArg(args, "--write-db") && !HasArg(args, "--dry-run") && !HasArg(args, "--no-write-db"),
+                    GetIntArg(args, "--limit") ?? GetIntArg(args, "--max-inserts"),
+                    GetStringArg(args, "--url-csv"),
+                    GetIntArg(args, "--limit-sites"),
+                    GetIntArg(args, "--skip-sites") ?? 0);
                 return;
             }
 
@@ -1335,10 +1349,13 @@ namespace LinkupFeed
             Console.WriteLine($"[{label}] WRITE MODE ENABLED. Refreshing existing duplicates and inserting new jobs into database...");
             WriteDedupeResultToDatabase(connectionString, deduped, jobsToInsert, insertLimit, $"[{label}]");
         }
-        private static async System.Threading.Tasks.Task RunSmartRecruitersOnlyAsync(bool writeToDatabase, int? insertLimit, string onlyCompany)
+        private static async System.Threading.Tasks.Task RunSmartRecruitersOnlyAsync(bool writeToDatabase, int? insertLimit, string onlyCompany, string urlCsv = null, int? limitSites = null)
         {
             Console.WriteLine("[SmartRecruiters-Only] Starting scraper...");
-            var jobs = await new SmartRecruitersScraper().FetchJobsAsync(onlyCompany);
+            var scraper = new SmartRecruitersScraper();
+            var jobs = string.IsNullOrWhiteSpace(urlCsv)
+                ? await scraper.FetchJobsAsync(onlyCompany)
+                : await scraper.FetchJobsFromCsvAsync(urlCsv, limitSites);
             Console.WriteLine($"[SmartRecruiters-Only] Scraper returned {jobs.Count} jobs (pre-US-filter).");
 
             int before = jobs.Count;
@@ -1386,6 +1403,23 @@ namespace LinkupFeed
 
             Console.WriteLine("[SmartRecruiters-Only] WRITE MODE ENABLED. Refreshing existing duplicates and inserting new jobs into database...");
             WriteDedupeResultToDatabase(connectionString, deduped, jobsToInsert, insertLimit, "[SmartRecruiters-Only]");
+        }
+
+        private static async System.Threading.Tasks.Task RunGreenhouseOnlyAsync(
+            bool writeToDatabase,
+            int? insertLimit,
+            string inputCsv,
+            int? limitSites,
+            int skipSites)
+        {
+            await RunSingleScraperWithDedupeAsync(
+                "Greenhouse-Only",
+                () => string.IsNullOrWhiteSpace(inputCsv)
+                    ? new GreenhouseAtsScraper().FetchJobsAsync()
+                    : new GreenhouseAtsScraper().FetchJobsFromCsvAsync(inputCsv, limitSites, skipSites),
+                writeToDatabase,
+                insertLimit,
+                includeRemoteWithoutUsLocation: true);
         }
 
         private static async System.Threading.Tasks.Task RunDayforceOnlyAsync(bool writeToDatabase, int? insertLimit, string onlyCompany)

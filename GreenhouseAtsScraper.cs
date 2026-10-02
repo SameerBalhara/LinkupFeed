@@ -137,18 +137,61 @@ namespace LinkupFeed
         // ── Main fetch (parallel with concurrency cap) ───────────────────────────
         public async Task<List<ScrapedJob>> FetchJobsAsync()
         {
+            return await FetchJobsForCompaniesAsync(
+                Companies.Select(company => (Identifier: company, Company: company)));
+        }
+
+        public async Task<List<ScrapedJob>> FetchJobsFromCsvAsync(
+            string inputCsv,
+            int? limitSites = null,
+            int skipSites = 0)
+        {
+            var companies = AtsCsv.ReadRows(inputCsv)
+                .Select(row =>
+                {
+                    var identifier = FirstNonEmpty(
+                        AtsCsv.Get(row, "identifier"),
+                        AtsCsv.Get(row, "tenant"),
+                        AtsCsv.Get(row, "company"));
+                    var company = FirstNonEmpty(AtsCsv.Get(row, "company"), identifier);
+                    return (Identifier: identifier, Company: company);
+                })
+                .Where(company => !string.IsNullOrWhiteSpace(company.Identifier))
+                .GroupBy(company => company.Identifier, StringComparer.OrdinalIgnoreCase)
+                .Select(group => group.First())
+                .ToList();
+
+            if (skipSites > 0)
+            {
+                companies = companies.Skip(skipSites).ToList();
+            }
+
+            if (limitSites.HasValue)
+            {
+                companies = companies.Take(limitSites.Value).ToList();
+            }
+
+            Console.WriteLine($"[Greenhouse] Loaded {companies.Count} company rows from {inputCsv} after skipping {skipSites}");
+            return await FetchJobsForCompaniesAsync(companies);
+        }
+
+        private async Task<List<ScrapedJob>> FetchJobsForCompaniesAsync(
+            IEnumerable<(string Identifier, string Company)> companies)
+        {
             var results = new List<ScrapedJob>();
 
-            foreach (var company in Companies)
+            foreach (var (identifier, companyName) in companies)
             {
                 try
                 {
-                    var url = $"https://boards-api.greenhouse.io/v1/boards/{company}/jobs?content=true";
+                    Console.WriteLine($"[Greenhouse] {identifier} -> starting");
+                    var url = $"https://boards-api.greenhouse.io/v1/boards/{Uri.EscapeDataString(identifier)}/jobs?content=true";
                     var json = await Http.GetStringAsync(url);
                     var root = JsonDocument.Parse(json).RootElement;
 
                     if (!root.TryGetProperty("jobs", out var jobsEl)) continue;
 
+                    int added = 0;
                     foreach (var j in jobsEl.EnumerateArray())
                     {
                         // Location filter — only USA
@@ -164,7 +207,7 @@ namespace LinkupFeed
                             ExternalId = j.TryGetProperty("id", out var idEl)
                                             ? idEl.GetInt64().ToString() : null,
                             Title = j.GetStringOrNull("title"),
-                            Company = company.ToUpperFirst(),
+                            Company = companyName.ToUpperFirst(),
                             Location = location,
                             Description = description,
                             JobUrl = j.GetStringOrNull("absolute_url"),
@@ -175,11 +218,14 @@ namespace LinkupFeed
                             JobType = ExtractJobType(j, description),
                             Category = ExtractCategory(j)
                         });
+                        added++;
                     }
+
+                    Console.WriteLine($"[Greenhouse] {identifier} -> {added} US/remote jobs");
                 }
                 catch (Exception ex)
                 {
-                    Console.WriteLine($"[Greenhouse] {company} error: {ex.Message}");
+                    Console.WriteLine($"[Greenhouse] {identifier} error: {ex.Message}");
                 }
 
                 await Task.Delay(800);
